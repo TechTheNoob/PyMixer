@@ -105,80 +105,31 @@
     return (base[0] || "?").toUpperCase();
   }
 
-  function demoBootstrap() {
-    state.demo = true;
-    state.ports = ["COM5", "COM3", "COM4"];
-    state.apps = ["chrome.exe", "firefox.exe", "Discord.exe", "spotify.exe", "Code.exe"];
-    state.appCatalog = {
-      audio: [
-        { value: "Discord.exe", label: "Discord" },
-        { value: "spotify.exe", label: "spotify" },
-        { value: "chrome.exe", label: "chrome" },
-      ],
-      running: [
-        { value: "firefox.exe", label: "firefox" },
-        { value: "Code.exe", label: "Code" },
-      ],
-      current: null,
-    };
-    state.connected = true;
+  function offlineShell() {
+    /* Bridge missing: paint an empty shell. Faders stay "—" until pywebviewready. */
+    state.demo = false;
+    state.connected = false;
+    state.ports = [];
+    state.apps = [];
+    state.appCatalog = { audio: [], running: [], current: null };
     state.config = {
-      SERIAL_PORT: "COM5",
+      SERIAL_PORT: "",
       BAUD_RATE: 115200,
       NUM_KNOBS: 5,
       NUM_BUTTONS: 10,
-      ACTIVE_PROFILE: "Gaming",
-      PROFILE_ICONS: { Gaming: "🎮", Work: "💼", Music: "🎵" },
-      APP_MAPPINGS: {
-        K1: "focused_app",
-        K2: "",
-        K3: "firefox.exe",
-        K4: "Discord.exe",
-        K5: "explorer.exe",
-        B1: "chrome.exe",
-        B2: "spotify.exe",
-        B3: "www.youtube.com",
-        B4: "",
-        B5: "",
-        B6: "",
-        B7: "",
-        B8: "",
-        B9: "",
-        B10: "",
-      },
-      SLIDER_REVERSE: { K1: true, K2: true, K3: true, K4: true, K5: true },
-      SLIDER_SENSITIVITY: { K1: 1.0, K2: 1.0, K3: 1.0, K4: 1.0, K5: 1.0 },
-      SLIDER_CURVE: { K1: "gentle", K2: "linear", K3: "linear", K4: "strong", K5: "linear" },
-      PROFILES: {
-        Gaming: null,
-        Work: null,
-        Music: null,
-      },
+      ACTIVE_PROFILE: "Default",
+      PROFILE_ICONS: { Default: "D" },
+      APP_MAPPINGS: {},
+      SLIDER_REVERSE: {},
+      SLIDER_SENSITIVITY: {},
+      SLIDER_CURVE: {},
+      PROFILES: { Default: null },
     };
-    const payload = {
-      APP_MAPPINGS: { ...state.config.APP_MAPPINGS },
-      SLIDER_REVERSE: { ...state.config.SLIDER_REVERSE },
-      SLIDER_SENSITIVITY: { ...state.config.SLIDER_SENSITIVITY },
-      SLIDER_CURVE: { ...state.config.SLIDER_CURVE },
-    };
-    state.config.PROFILES.Gaming = JSON.parse(JSON.stringify(payload));
-    state.config.PROFILES.Work = JSON.parse(JSON.stringify(payload));
-    state.config.PROFILES.Work.APP_MAPPINGS.K3 = "Code.exe";
-    state.config.PROFILES.Work.SLIDER_CURVE.K1 = "linear";
-    state.config.PROFILES.Music = JSON.parse(JSON.stringify(payload));
-    state.config.PROFILES.Music.APP_MAPPINGS.K4 = "spotify.exe";
-    // Demo live levels so faders move in screenshots
-    state.live = {
-      stale: false,
-      connected: true,
-      knobs: {
-        K1: { raw: 700, volume: 0.55, pct: 55 },
-        K2: { raw: 100, volume: 0.1, pct: 10 },
-        K3: { raw: 820, volume: 0.72, pct: 72 },
-        K4: { raw: 900, volume: 0.68, pct: 68 },
-        K5: { raw: 600, volume: 0.59, pct: 59 },
-      },
-    };
+    state.live = { stale: true, connected: false, knobs: {} };
+  }
+  // Back-compat alias — MUST NOT invent live percentages
+  function demoBootstrap() {
+    offlineShell();
   }
 
   async function refresh() {
@@ -192,8 +143,8 @@
       if (data.live) state.live = data.live;
       state.demo = !!data.demo;
     } catch (err) {
-      console.warn("get_state failed, using demo data:", err);
-      demoBootstrap();
+      console.warn("get_state failed, waiting for bridge:", err);
+      offlineShell();
     }
     render();
   }
@@ -575,7 +526,7 @@
   async function onSwitchProfile(name) {
     if (!state.config || name === state.config.ACTIVE_PROFILE) return;
     collectFromDom();
-    if (state.demo) {
+    if (!api()) {
       const cur = state.config.ACTIVE_PROFILE;
       state.config.PROFILES[cur] = snapshotProfilePayload(state.config);
       const next = state.config.PROFILES[name];
@@ -600,8 +551,8 @@
   async function onSave() {
     const cfg = collectFromDom();
     if (!cfg) return;
-    if (state.demo) {
-      toast("Demo mode — not saved");
+    if (!api()) {
+      toast("Not connected to the tray app — cannot save", true);
       return;
     }
     $("btn-save").disabled = true;
@@ -657,7 +608,7 @@
     }
     collectFromDom();
     try {
-      if (state.demo) {
+      if (!api()) {
         if (state.modalMode === "add") {
           if (state.config.PROFILES[name]) throw new Error("Already exists");
           state.config.PROFILES[name] = snapshotProfilePayload(state.config);
@@ -693,7 +644,7 @@
     const name = state.ctxProfile;
     if (!name) return;
     try {
-      if (state.demo) {
+      if (!api()) {
         if (Object.keys(state.config.PROFILES).length <= 1) throw new Error("Cannot delete last profile");
         delete state.config.PROFILES[name];
         delete state.config.PROFILE_ICONS[name];
@@ -731,16 +682,10 @@
   }
 
   async function pollLive() {
-    if (state.demo) {
-      // Mild demo drift so screenshots look alive
-      const knobs = state.live.knobs || {};
-      Object.keys(knobs).forEach((k, idx) => {
-        const base = [55, 10, 72, 68, 59][idx] || 40;
-        const wobble = Math.round(Math.sin(Date.now() / 800 + idx) * 3);
-        const pct = Math.max(0, Math.min(100, base + wobble));
-        knobs[k] = { raw: Math.round(pct * 10.23), volume: pct / 100, pct };
-      });
-      state.live.stale = false;
+    // Always read from the Python bridge when available.
+    // Never invent placeholder / drifting percentages (that hid real board values).
+    if (!api()) {
+      state.live = { stale: true, connected: false, knobs: {} };
       const n = (state.config && state.config.NUM_KNOBS) || 5;
       for (let i = 1; i <= n; i++) updateFaderDom("K" + i);
       return;
@@ -757,7 +702,7 @@
       const n = (state.config && state.config.NUM_KNOBS) || 5;
       for (let i = 1; i <= n; i++) updateFaderDom("K" + i);
     } catch (_) {
-      /* bridge not ready */
+      /* bridge momentarily unavailable — keep last good reading, mark stale next tick */
     }
   }
 
@@ -829,12 +774,23 @@
       stamp();
       return;
     }
+    wire();
     if (!api()) {
-      demoBootstrap();
-      wire();
+      offlineShell();
       render();
-      startLivePoll();
       stamp();
+      // Retry briefly — pywebviewready may fire slightly after DOMContentLoaded
+      let tries = 0;
+      const retry = setInterval(() => {
+        tries += 1;
+        if (api() || tries > 40) {
+          clearInterval(retry);
+          if (api()) {
+            refresh().then(startLivePoll).then(stamp).catch(stamp);
+          }
+        }
+      }, 100);
+      return;
     }
     refresh().then(() => {
       startLivePoll();
@@ -853,6 +809,7 @@
     state,
     collectFromDom,
     demoBootstrap,
+    offlineShell,
     pollLive,
     updateFaderDom,
     stamp,

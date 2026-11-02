@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const state = { data: null, demo: false, timer: null };
+  const state = { data: null, demo: false, timer: null, waiting: false };
 
   const $ = (id) => document.getElementById(id);
 
@@ -14,28 +14,41 @@
     return a[method](...args);
   }
 
-  function demoData() {
-    return {
-      active: "Gaming",
-      profiles: ["Default", "Gaming", "Work", "Music"],
-      icons: { Default: "D", Gaming: "G", Work: "W", Music: "M" },
-      connected: true,
-      live: {
-        stale: false,
-        knobs: {
-          K1: { pct: 55 }, K2: { pct: 12 }, K3: { pct: 72 }, K4: { pct: 68 }, K5: { pct: 40 },
-        },
-      },
-    };
+  function emptyLive() {
+    return { stale: true, connected: false, knobs: {} };
   }
 
   async function refresh() {
+    if (!api()) {
+      state.data = {
+        active: "—",
+        profiles: [],
+        icons: {},
+        connected: false,
+        demo: false,
+        live: emptyLive(),
+      };
+      state.demo = false;
+      state.waiting = true;
+      render();
+      return;
+    }
     try {
       state.data = await call("get_popup_state");
-      state.demo = false;
+      // Hardware demo flag is for status only — never invent live numbers
+      state.demo = !!(state.data && state.data.demo);
+      state.waiting = false;
     } catch (e) {
-      state.data = demoData();
-      state.demo = true;
+      state.data = {
+        active: "—",
+        profiles: [],
+        icons: {},
+        connected: false,
+        demo: false,
+        live: emptyLive(),
+      };
+      state.demo = false;
+      state.waiting = true;
     }
     render();
   }
@@ -43,126 +56,83 @@
   function renderLevels() {
     const root = $("levels");
     root.innerHTML = "";
-    const live = (state.data && state.data.live) || { stale: true, knobs: {} };
+    const live = (state.data && state.data.live) || emptyLive();
     for (let i = 1; i <= 5; i++) {
       const key = "K" + i;
       const entry = (live.knobs || {})[key] || {};
       const stale = !!live.stale || entry.pct == null;
-      const pct = stale ? 0 : Math.max(0, Math.min(100, Math.round(Number(entry.pct))));
-      const el = document.createElement("div");
-      el.className = "lvl";
-      el.innerHTML =
-        '<div class="t">K' + i + "</div>" +
-        '<div class="bar' + (stale ? " stale" : "") + '">' +
-        '<div class="fill" style="height:' + pct + '%;opacity:' + (stale ? "0.35" : "1") + '"></div>' +
-        '<div class="knob" style="bottom:calc(' + pct + '% - 5px);opacity:' + (stale ? "0.35" : "1") + '"></div>' +
-        "</div>" +
-        '<div class="p' + (stale ? " dim" : "") + '">' + (stale ? "—" : pct + "%") + "</div>";
-      root.appendChild(el);
+      const pct = stale ? null : Math.max(0, Math.min(100, Math.round(Number(entry.pct) || 0)));
+      const row = document.createElement("div");
+      row.className = "level" + (stale ? " stale" : "");
+      row.dataset.knob = key;
+      row.innerHTML =
+        '<span class="k">' +
+        key +
+        '</span><div class="bar"><i style="width:' +
+        (pct == null ? 0 : pct) +
+        '%"></i></div><span class="pct">' +
+        (pct == null ? "—" : pct + "%") +
+        "</span>";
+      root.appendChild(row);
     }
-  }
-
-  function renderProfiles() {
-    const root = $("profiles");
-    root.innerHTML = "";
-    const data = state.data || demoData();
-    const active = data.active || "Default";
-    const icons = data.icons || {};
-    (data.profiles || []).forEach((name) => {
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "pitem" + (name === active ? " active" : "");
-      btn.innerHTML =
-        '<span class="ico">' + (icons[name] || name.slice(0, 1).toUpperCase()) + "</span>" +
-        '<span class="lab"></span><span class="check">✓</span>';
-      btn.querySelector(".lab").textContent = name;
-      btn.addEventListener("click", () => onSwitch(name));
-      root.appendChild(btn);
-    });
   }
 
   function render() {
-    const data = state.data || demoData();
-    $("active-profile").textContent = data.active || "Default";
+    const d = state.data || {};
+    $("active-profile").textContent = d.active || "—";
     const pill = $("status-pill");
     const text = $("status-text");
-    if (data.demo || state.demo) {
+    if (state.demo || d.demo) {
       pill.classList.remove("off");
       text.textContent = "Demo";
-      state.demo = true;
-    } else if (data.connected) {
+    } else if (d.connected) {
       pill.classList.remove("off");
-      text.textContent = "Live";
+      text.textContent = "Online";
     } else {
       pill.classList.add("off");
-      text.textContent = "Offline";
+      text.textContent = state.waiting ? "Waiting…" : "Offline";
     }
+    const list = $("profiles");
+    list.innerHTML = "";
+    (d.profiles || []).forEach((name) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "prof" + (name === d.active ? " active" : "");
+      const icon = (d.icons && d.icons[name]) || (name[0] || "?").toUpperCase();
+      btn.innerHTML = '<span class="ic">' + icon + "</span><span>" + name + "</span>";
+      btn.addEventListener("click", () => onSwitch(name));
+      list.appendChild(btn);
+    });
     renderLevels();
-    renderProfiles();
-    stamp();
   }
 
   async function onSwitch(name) {
-    if (state.demo) {
-      state.data.active = name;
-      render();
-      setTimeout(() => call("dismiss").catch(() => {}), 120);
-      return;
-    }
+    if (!api()) return;
     try {
       await call("switch_profile", name);
-      await call("dismiss");
-    } catch (e) {
-      console.warn(e);
-    }
+      await refresh();
+    } catch (_) {}
   }
 
   async function onSettings() {
-    if (state.demo) return;
+    if (!api()) return;
     try {
       await call("open_settings");
-      await call("dismiss");
-    } catch (e) {
-      console.warn(e);
-    }
+    } catch (_) {}
   }
 
   async function onReconnect() {
-    if (state.demo) {
-      state.data.connected = true;
-      render();
-      return;
-    }
+    if (!api()) return;
     try {
       await call("reconnect");
       await refresh();
-    } catch (e) {
-      console.warn(e);
-    }
+    } catch (_) {}
   }
 
   async function onQuit() {
-    if (state.demo) return;
+    if (!api()) return;
     try {
       await call("quit_app");
-    } catch (e) {
-      console.warn(e);
-    }
-  }
-
-  function stamp() {
-    try {
-      const d = state.data || {};
-      document.documentElement.setAttribute(
-        "data-tray-popup",
-        JSON.stringify({
-          demo: !!state.demo,
-          active: d.active || null,
-          profiles: d.profiles || [],
-          connected: !!d.connected,
-          hasFakeChrome: !!document.querySelector(".titlebar, .winbtns, #btn-close"),
-        })
-      );
     } catch (_) {}
   }
 
@@ -176,7 +146,6 @@
       if (e.key === "Escape") dismiss();
     });
     window.addEventListener("blur", () => {
-      // Debounce: tray icon click can blur then immediately re-show
       clearTimeout(blurTimer);
       blurTimer = setTimeout(() => {
         if (!document.hasFocus()) dismiss();
@@ -187,37 +156,44 @@
     });
   }
 
+  function startLivePoll() {
+    if (state.timer) clearInterval(state.timer);
+    state.timer = setInterval(async () => {
+      if (!api()) return;
+      try {
+        const live = await call("get_live");
+        if (state.data) state.data.live = live;
+        renderLevels();
+      } catch (_) {}
+    }, 150);
+  }
+
   function boot() {
     wire();
-    refresh().then(() => {
-      if (state.timer) clearInterval(state.timer);
-      state.timer = setInterval(async () => {
-        if (state.demo) return;
-        try {
-          const live = await call("get_live");
-          if (state.data) state.data.live = live;
-          renderLevels();
-        } catch (_) {}
-      }, 150);
-    });
+    refresh().then(startLivePoll);
   }
 
   window.addEventListener("pywebviewready", boot);
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       if (!api()) {
-        state.data = demoData();
-        state.demo = true;
+        // Empty shell — show "—", then boot when bridge appears
         wire();
-        render();
+        refresh();
+        let tries = 0;
+        const retry = setInterval(() => {
+          tries += 1;
+          if (api() || tries > 40) {
+            clearInterval(retry);
+            if (api()) boot();
+          }
+        }, 100);
       }
     });
   } else if (!api()) {
-    state.data = demoData();
-    state.demo = true;
     wire();
-    render();
+    refresh();
   }
 
-  window.__tray_popup = { refresh, render, state, demoData };
+  window.__tray_popup = { refresh, render, renderLevels, state };
 })();
