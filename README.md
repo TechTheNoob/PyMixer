@@ -2,17 +2,21 @@
 
 Hardware volume mixer for an ESP32-S3 box + a Windows tray app.
 
-**Original project by [Strafer89](https://github.com/Strafer89)** — this is a fork that adds a Discord-dark settings UI (pywebview), saved **profiles**, and a few quality-of-life hooks. Firmware and the core serial → `pycaw` volume path are unchanged.
+**Original project by [Strafer89](https://github.com/Strafer89)** — this is a fork that adds a Discord-dark settings UI (pywebview), saved **profiles**, live fader readouts, and per-knob response curves. Firmware and the core serial → `pycaw` volume path are unchanged.
 
 ![Settings UI](docs/settings-ui.png)
 
 ## What's new in this fork
 
-- **Discord-dark settings window** with Rubik + Inter, thin vertical faders, round knobs, blurple Bloom glow, no borders
+- **Discord-dark settings window** with Rubik + Inter, thin vertical faders, round knobs, blurple Bloom glow, no borders (native Windows frame only — no fake title-bar)
+- **Live faders** — display-only meters that track each physical slider after reverse + curve; shows "—" when the tray app / device isn't publishing
+- **Per-knob response curve** — Linear / Gentle / Strong (`volume = x ** exponent`) so the low end gets more travel
+- **Jitter filter** (formerly unlabeled "sensitivity") — how far the physical slider must move before volume updates
 - **Profiles rail** (add / rename / delete / switch) — Gaming, Work, Music, or whatever you name them
 - Tray **Profiles** submenu + hardware button actions `next_profile` and `profile:<Name>`
+- URL field on buttons appears **only** when the action is **Open Webpage…**
 - Classic Tk settings UI is still there as a fallback if `pywebview` isn't installed
-- `config.py` stays backward compatible; first launch migrates your existing mappings into a **Default** profile
+- `config.py` stays backward compatible; first launch migrates your existing mappings into a **Default** profile (curves default to linear)
 
 ## Install (Windows)
 
@@ -30,11 +34,23 @@ See `requirements.txt`: `pyserial`, `pycaw`, `comtypes`, `pystray`, `Pillow`, `p
 
 ## How profiles work
 
-Each profile stores its own knob mappings, reverse flags, and sensitivity. Serial port / baud / knob+button counts are shared.
+Each profile stores its own knob mappings, button actions, reverse flags, jitter filter, and response curve. Serial port / baud / knob+button counts are shared.
 
 - Switch from the **left rail** in Settings, the tray **Profiles** menu, or a hardware button set to **Next Profile**
 - Map a button to `profile:Gaming` (etc.) to jump straight to a named profile
+- Button / tray switches update the live tray config immediately (and persist to disk); Settings edits are picked up by the tray on its ~5 s reload
 - Edits you make are written into the active profile when you hit **Save** (or when you switch profiles)
+- Deleting the active profile falls back to another; the last profile can't be deleted
+
+## Knobs: reverse, jitter filter, curve
+
+| Control | What it does |
+|---------|----------------|
+| **Reverse** | Flips the physical slider direction |
+| **Jitter filter** | Deadband — larger values need a bigger physical move before volume changes (filters noisy pots) |
+| **Curve** | `linear` (1.0), `gentle` (~1.8), `strong` (~3.0). Strong keeps more of the travel in the quiet range |
+
+Live fader % in Settings is the post-reverse, post-curve volume the tray would apply.
 
 ## Editing the look
 

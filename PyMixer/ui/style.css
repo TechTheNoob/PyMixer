@@ -31,9 +31,9 @@
 
   .shell {
     position: relative; z-index: 2;
-    width: 1060px; height: 600px; margin: 20px;
+    width: 1060px; height: 600px; margin: 12px;
     display: flex; border-radius: 12px; overflow: hidden;
-    box-shadow: 0 20px 50px rgba(0,0,0,0.45);
+    box-shadow: 0 12px 36px rgba(0,0,0,0.35);
   }
 
   /* Discord-like server rail */
@@ -84,7 +84,7 @@
     display: flex; flex-direction: column; overflow: hidden;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
   }
-  .titlebar {
+  .header {
     height: 36px; display: flex; align-items: center; justify-content: space-between;
     padding: 0 14px; background: rgba(30,31,34,0.55); flex-shrink: 0;
   }
@@ -98,7 +98,6 @@
     font-family: var(--inter); font-size: 11px; color: var(--muted);
     background: var(--panel); padding: 2px 8px; border-radius: 999px; margin-left: 4px;
   }
-  .winbtns { display: flex; gap: 12px; color: var(--muted); font-size: 11px; }
 
   .content {
     flex: 1; padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 10px; min-height: 0;
@@ -140,7 +139,7 @@
   .channel {
     background: var(--panel); border-radius: 8px; padding: 9px 8px 8px;
     display: flex; flex-direction: column; align-items: center; gap: 5px;
-    min-height: 286px; box-shadow: 0 2px 8px rgba(0,0,0,0.16);
+    min-height: 310px; box-shadow: 0 2px 8px rgba(0,0,0,0.16);
   }
   .channel.off { opacity: 0.55; }
   .badge {
@@ -166,7 +165,11 @@
   .fader {
     width: 4px; height: 100%; border-radius: 2px; background: var(--deep); position: relative;
     box-shadow: inset 0 1px 2px rgba(0,0,0,0.35);
+    pointer-events: none; user-select: none;
   }
+  .fader.stale .fader-fill { opacity: 0.35; }
+  .fader.stale .fader-knob { opacity: 0.35; box-shadow: none; }
+  .vol.stale { color: var(--muted); opacity: 0.7; font-size: 13px; font-weight: 500; }
   .fader-fill {
     position: absolute; left: 0; right: 0; bottom: 0; border-radius: 2px;
     background: linear-gradient(180deg, #949cf7 0%, var(--blurple) 100%);
@@ -237,7 +240,7 @@
   /* Interactive controls (pywebview / live UI) */
   html, body { width: 100%; height: 100%; min-width: 960px; min-height: 600px; }
   .scene { width: 100%; height: 100%; }
-  .shell { width: calc(100% - 40px); height: calc(100% - 40px); margin: 20px; }
+  .shell { width: calc(100% - 24px); height: calc(100% - 24px); margin: 12px; }
   .rail-item { cursor: pointer; border: none; outline: none; }
   .rail-item:hover:not(.active):not(.home) { border-radius: 14px; background: var(--elev); }
   .rail-item.add:hover { color: #fff; background: var(--green); box-shadow: none; }
@@ -281,9 +284,6 @@
   }
   .toast.show { opacity: 1; transform: translateY(0); }
   .toast.err { background: #ed4245; }
-  .winbtns span { cursor: default; user-select: none; }
-  .winbtns .close-btn { cursor: pointer; }
-  .winbtns .close-btn:hover { color: #ed4245; }
   .channel select.dd { margin-top: 0; }
   .bcard select.bact-select {
     width: 100%; background: transparent; border: none; outline: none; color: inherit;
@@ -325,3 +325,24 @@
   }
   .rail-ctx button:hover { background: var(--elev); }
   .rail-ctx button.danger { color: #ed4245; }
+
+  .opts-col { width: 100%; display: flex; flex-direction: column; gap: 4px; }
+  .opts { flex-wrap: wrap; }
+  .sens-label {
+    font-family: var(--inter); font-size: 9px; color: var(--muted);
+    white-space: nowrap;
+  }
+  .curve-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 4px;
+    font-family: var(--inter); font-size: 10px; color: var(--muted); width: 100%;
+  }
+  .curve-row label { flex-shrink: 0; }
+  select.curve-select {
+    flex: 1; min-width: 0; background: var(--deep); color: var(--text); border: none; outline: none;
+    font-family: var(--inter); font-size: 10px; font-weight: 500;
+    padding: 4px 5px; border-radius: 6px; appearance: none; -webkit-appearance: none;
+    cursor: pointer;
+  }
+  input.burl-input { display: none; }
+  input.burl-input.show { display: block; }
+

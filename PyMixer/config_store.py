@@ -9,6 +9,7 @@ SERIAL_PORT / APP_MAPPINGS / etc. still work. Profiles are stored as:
             "APP_MAPPINGS": {...},
             "SLIDER_REVERSE": {...},
             "SLIDER_SENSITIVITY": {...},
+            "SLIDER_CURVE": {...},
         },
         ...
     }
@@ -21,9 +22,11 @@ active profile so the serial reader keeps working unchanged.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
+import time
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -42,8 +45,102 @@ SPECIAL_BUTTON_ACTIONS = {
     "next_profile": "Next Profile",
 }
 
-# Button values that are treated as "open URL" when they look like a URL
-# (start with http, or contain a dot and no .exe). Stored as the raw string.
+# Response curve: volume = x ** exponent (more travel at the low end).
+CURVE_EXPONENTS = {
+    "linear": 1.0,
+    "gentle": 1.8,
+    "strong": 3.0,
+}
+DEFAULT_CURVE = "linear"
+VALID_CURVES = tuple(CURVE_EXPONENTS.keys())
+
+# Live levels file written by the tray app, read by the settings UI.
+LIVE_LEVELS_FILENAME = "live_levels.json"
+LIVE_LEVELS_STALE_SECONDS = 2.0
+
+
+def normalize_curve(value: Any) -> str:
+    if isinstance(value, str) and value.lower() in CURVE_EXPONENTS:
+        return value.lower()
+    return DEFAULT_CURVE
+
+
+def apply_curve(normalized: float, curve: str = DEFAULT_CURVE) -> float:
+    """Map 0..1 slider position through the response curve."""
+    x = max(0.0, min(1.0, float(normalized)))
+    exp = CURVE_EXPONENTS.get(normalize_curve(curve), 1.0)
+    if exp == 1.0:
+        return x
+    return x ** exp
+
+
+def live_levels_path(base_dir: Optional[str] = None) -> str:
+    if base_dir is None:
+        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+    return os.path.join(base_dir, LIVE_LEVELS_FILENAME)
+
+
+def write_live_levels(
+    knobs: Dict[str, Dict[str, Any]],
+    path: Optional[str] = None,
+    *,
+    connected: bool = True,
+) -> None:
+    """Atomically write live knob levels for the settings UI to poll."""
+    path = path or live_levels_path()
+    payload = {
+        "ts": time.time(),
+        "connected": bool(connected),
+        "knobs": knobs,
+    }
+    directory = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=".live_", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(payload, f, separators=(",", ":"))
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        # Non-fatal for the audio path — swallow after cleanup.
+
+
+def read_live_levels(
+    path: Optional[str] = None,
+    *,
+    stale_after: float = LIVE_LEVELS_STALE_SECONDS,
+) -> Dict[str, Any]:
+    """Read live levels. Marks stale when older than stale_after seconds."""
+    path = path or live_levels_path()
+    empty = {
+        "ts": 0.0,
+        "connected": False,
+        "stale": True,
+        "knobs": {},
+        "age": None,
+    }
+    if not os.path.exists(path):
+        return empty
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return empty
+        ts = float(data.get("ts") or 0.0)
+        age = max(0.0, time.time() - ts) if ts else None
+        stale = age is None or age > stale_after
+        knobs = data.get("knobs") if isinstance(data.get("knobs"), dict) else {}
+        return {
+            "ts": ts,
+            "connected": bool(data.get("connected", True)) and not stale,
+            "stale": stale,
+            "knobs": knobs,
+            "age": age,
+        }
+    except Exception:
+        return empty
 
 
 def default_config() -> Dict[str, Any]:
@@ -53,10 +150,12 @@ def default_config() -> Dict[str, Any]:
     mappings.update({f"B{i+1}": "" for i in range(buttons)})
     reverse = {f"K{i+1}": False for i in range(knobs)}
     sensitivity = {f"K{i+1}": 1.0 for i in range(knobs)}
+    curve = {f"K{i+1}": DEFAULT_CURVE for i in range(knobs)}
     profile = {
         "APP_MAPPINGS": mappings,
         "SLIDER_REVERSE": reverse,
         "SLIDER_SENSITIVITY": sensitivity,
+        "SLIDER_CURVE": curve,
     }
     return {
         "SERIAL_PORT": "COM3",
@@ -66,29 +165,50 @@ def default_config() -> Dict[str, Any]:
         "APP_MAPPINGS": deepcopy(mappings),
         "SLIDER_REVERSE": deepcopy(reverse),
         "SLIDER_SENSITIVITY": deepcopy(sensitivity),
+        "SLIDER_CURVE": deepcopy(curve),
         "PROFILES": {"Default": deepcopy(profile)},
         "ACTIVE_PROFILE": "Default",
         "PROFILE_ICONS": {"Default": "P"},
     }
 
 
+def _ensure_curve_map(raw: Any, num_knobs: int, fallback: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    src = raw if isinstance(raw, dict) else {}
+    fb = fallback if isinstance(fallback, dict) else {}
+    for i in range(num_knobs):
+        key = f"K{i+1}"
+        if key in src:
+            out[key] = normalize_curve(src[key])
+        elif key in fb:
+            out[key] = normalize_curve(fb[key])
+        else:
+            out[key] = DEFAULT_CURVE
+    return out
+
+
 def _profile_payload(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    num_knobs = int(cfg.get("NUM_KNOBS") or DEFAULT_NUM_KNOBS)
     return {
         "APP_MAPPINGS": deepcopy(cfg.get("APP_MAPPINGS", {})),
         "SLIDER_REVERSE": deepcopy(cfg.get("SLIDER_REVERSE", {})),
         "SLIDER_SENSITIVITY": deepcopy(cfg.get("SLIDER_SENSITIVITY", {})),
+        "SLIDER_CURVE": _ensure_curve_map(cfg.get("SLIDER_CURVE"), num_knobs),
     }
 
 
 def migrate_profiles(cfg: Dict[str, Any], *, apply: bool = True) -> Dict[str, Any]:
-    """Ensure PROFILES / ACTIVE_PROFILE exist; migrate legacy flat config."""
+    """Ensure PROFILES / ACTIVE_PROFILE / SLIDER_CURVE exist; migrate legacy flat config."""
     out = deepcopy(cfg)
+    num_knobs = int(out.get("NUM_KNOBS") or DEFAULT_NUM_KNOBS)
+    # Top-level curve migration
+    out["SLIDER_CURVE"] = _ensure_curve_map(out.get("SLIDER_CURVE"), num_knobs)
+
     profiles = out.get("PROFILES")
     if not isinstance(profiles, dict) or not profiles:
         out["PROFILES"] = {"Default": _profile_payload(out)}
         out["ACTIVE_PROFILE"] = "Default"
     else:
-        # Normalize each profile to have the three keys
         normalized = {}
         for name, payload in profiles.items():
             if not isinstance(payload, dict):
@@ -105,6 +225,11 @@ def migrate_profiles(cfg: Dict[str, Any], *, apply: bool = True) -> Dict[str, An
                         "SLIDER_SENSITIVITY", out.get("SLIDER_SENSITIVITY", {})
                     )
                 ),
+                "SLIDER_CURVE": _ensure_curve_map(
+                    payload.get("SLIDER_CURVE"),
+                    num_knobs,
+                    out.get("SLIDER_CURVE"),
+                ),
             }
         if not normalized:
             normalized = {"Default": _profile_payload(out)}
@@ -116,8 +241,6 @@ def migrate_profiles(cfg: Dict[str, Any], *, apply: bool = True) -> Dict[str, An
         out["PROFILE_ICONS"] = {}
     for name in out["PROFILES"]:
         out["PROFILE_ICONS"].setdefault(name, _default_icon(name))
-    # Mirror active profile onto top-level keys (skip when caller already
-    # pushed newer top-level edits into the active profile and wants to save).
     if apply:
         apply_active_profile(out)
     return out
@@ -142,9 +265,13 @@ def apply_active_profile(cfg: Dict[str, Any]) -> None:
     if active not in profiles:
         return
     payload = profiles[active]
+    num_knobs = int(cfg.get("NUM_KNOBS") or DEFAULT_NUM_KNOBS)
     cfg["APP_MAPPINGS"] = deepcopy(payload.get("APP_MAPPINGS", {}))
     cfg["SLIDER_REVERSE"] = deepcopy(payload.get("SLIDER_REVERSE", {}))
     cfg["SLIDER_SENSITIVITY"] = deepcopy(payload.get("SLIDER_SENSITIVITY", {}))
+    cfg["SLIDER_CURVE"] = _ensure_curve_map(
+        payload.get("SLIDER_CURVE"), num_knobs, cfg.get("SLIDER_CURVE")
+    )
 
 
 def sync_active_into_profiles(cfg: Dict[str, Any]) -> None:
@@ -174,8 +301,6 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
                 local_vars.get("PROFILES"), dict
             ) and bool(local_vars.get("PROFILES"))
             cfg.update(local_vars)
-            # If the file was legacy (no PROFILES), drop the empty default profile
-            # so migrate_profiles rebuilds Default from the top-level mappings.
             if not file_had_profiles:
                 cfg["PROFILES"] = {}
                 cfg["ACTIVE_PROFILE"] = "Default"
@@ -191,8 +316,6 @@ def _repr_write(value: Any) -> str:
 def save_config(cfg: Dict[str, Any], path: Optional[str] = None) -> None:
     """Atomically write config.py. Always mirrors active profile to top-level."""
     path = path or config_path()
-    # Normalize structure without clobbering in-memory top-level edits, then
-    # push those edits into the active profile and mirror back out.
     cfg = migrate_profiles(cfg, apply=False)
     sync_active_into_profiles(cfg)
     apply_active_profile(cfg)
@@ -205,6 +328,7 @@ def save_config(cfg: Dict[str, Any], path: Optional[str] = None) -> None:
         f"APP_MAPPINGS = {_repr_write(cfg['APP_MAPPINGS'])}",
         f"SLIDER_REVERSE = {_repr_write(cfg['SLIDER_REVERSE'])}",
         f"SLIDER_SENSITIVITY = {_repr_write(cfg['SLIDER_SENSITIVITY'])}",
+        f"SLIDER_CURVE = {_repr_write(cfg['SLIDER_CURVE'])}",
         f"PROFILES = {_repr_write(cfg['PROFILES'])}",
         f"ACTIVE_PROFILE = {_repr_write(cfg['ACTIVE_PROFILE'])}",
         f"PROFILE_ICONS = {_repr_write(cfg.get('PROFILE_ICONS', {}))}",
@@ -234,7 +358,6 @@ def switch_profile(cfg: Dict[str, Any], name: str) -> Dict[str, Any]:
     cfg = migrate_profiles(cfg)
     if name not in cfg["PROFILES"]:
         raise KeyError(f"Unknown profile: {name}")
-    # Persist current edits into the profile we're leaving
     sync_active_into_profiles(cfg)
     cfg["ACTIVE_PROFILE"] = name
     apply_active_profile(cfg)
@@ -321,7 +444,6 @@ def is_url_action(value: str) -> bool:
         return True
     if v.startswith("www."):
         return True
-    # bare domain-ish, not an exe and not a known special
     if (
         "." in v
         and not v.lower().endswith(".exe")

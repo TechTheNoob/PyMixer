@@ -7,10 +7,8 @@ from the tray menu.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
-import threading
 from typing import Any, Dict, List, Optional
 
 # Make sure we can import sibling modules when launched as a script
@@ -64,6 +62,7 @@ def _port_seems_open(port: str) -> bool:
 class Api:
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = config_file or config_store.config_path(HERE)
+        self.live_file = config_store.live_levels_path(HERE)
         self._window = None
 
     def bind_window(self, window) -> None:
@@ -77,12 +76,16 @@ class Api:
             "ports": ports,
             "apps": _list_apps(),
             "connected": _port_seems_open(str(cfg.get("SERIAL_PORT", ""))),
+            "live": config_store.read_live_levels(self.live_file),
         }
+
+    def get_live_levels(self) -> Dict[str, Any]:
+        """Polled by the UI (~100–150 ms) for display-only fader positions."""
+        return config_store.read_live_levels(self.live_file)
 
     def save_config(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(cfg, dict):
             raise ValueError("config must be an object")
-        # Merge onto disk config so we don't drop unknown keys carelessly
         current = config_store.load_config(self.config_file)
         current.update(cfg)
         config_store.save_config(current, self.config_file)
@@ -126,10 +129,6 @@ class Api:
         config_store.save_config(current, self.config_file)
         return config_store.load_config(self.config_file)
 
-    def close_window(self) -> None:
-        if self._window is not None:
-            self._window.destroy()
-
 
 def run(config_file: Optional[str] = None) -> None:
     try:
@@ -137,7 +136,6 @@ def run(config_file: Optional[str] = None) -> None:
     except ImportError:
         print("pywebview is not installed. Falling back to the classic Tk GUI.")
         print("Install with: pip install pywebview")
-        # Launch classic GUI
         import subprocess
 
         gui = os.path.join(HERE, "config_gui.py")
@@ -151,11 +149,12 @@ def run(config_file: Optional[str] = None) -> None:
         index,
         js_api=api,
         width=1100,
-        height=680,
-        min_size=(960, 600),
+        height=700,
+        min_size=(960, 620),
         background_color="#1E1F22",
     )
     api.bind_window(window)
+    # Native Windows frame only — no frameless / no custom close bridge.
     webview.start(debug=False)
 
 

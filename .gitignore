@@ -1,4 +1,6 @@
-__pycache__/
 *.pyc
-.pytest_cache/
 *.tmp
+.pytest_cache/
+PyMixer/live_levels.json
+__pycache__/
+live_levels.json

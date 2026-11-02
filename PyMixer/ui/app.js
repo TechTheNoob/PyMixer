@@ -17,6 +17,14 @@
     { value: "__url__", label: "Open Webpage…" },
   ];
 
+  const CURVE_OPTIONS = [
+    { value: "linear", label: "Linear" },
+    { value: "gentle", label: "Gentle" },
+    { value: "strong", label: "Strong" },
+  ];
+
+  const LIVE_POLL_MS = 120;
+
   const state = {
     config: null,
     ports: [],
@@ -25,6 +33,8 @@
     demo: false,
     modalMode: null, // 'add' | 'rename'
     ctxProfile: null,
+    live: { stale: true, knobs: {}, connected: false },
+    liveTimer: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -125,23 +135,37 @@
       },
       SLIDER_REVERSE: { K1: true, K2: true, K3: true, K4: true, K5: true },
       SLIDER_SENSITIVITY: { K1: 1.0, K2: 1.0, K3: 1.0, K4: 1.0, K5: 1.0 },
+      SLIDER_CURVE: { K1: "gentle", K2: "linear", K3: "linear", K4: "strong", K5: "linear" },
       PROFILES: {
         Gaming: null,
         Work: null,
         Music: null,
       },
     };
-    // Fill profile payloads from active mappings for demo
     const payload = {
       APP_MAPPINGS: { ...state.config.APP_MAPPINGS },
       SLIDER_REVERSE: { ...state.config.SLIDER_REVERSE },
       SLIDER_SENSITIVITY: { ...state.config.SLIDER_SENSITIVITY },
+      SLIDER_CURVE: { ...state.config.SLIDER_CURVE },
     };
     state.config.PROFILES.Gaming = JSON.parse(JSON.stringify(payload));
     state.config.PROFILES.Work = JSON.parse(JSON.stringify(payload));
     state.config.PROFILES.Work.APP_MAPPINGS.K3 = "Code.exe";
+    state.config.PROFILES.Work.SLIDER_CURVE.K1 = "linear";
     state.config.PROFILES.Music = JSON.parse(JSON.stringify(payload));
     state.config.PROFILES.Music.APP_MAPPINGS.K4 = "spotify.exe";
+    // Demo live levels so faders move in screenshots
+    state.live = {
+      stale: false,
+      connected: true,
+      knobs: {
+        K1: { raw: 700, volume: 0.55, pct: 55 },
+        K2: { raw: 100, volume: 0.1, pct: 10 },
+        K3: { raw: 820, volume: 0.72, pct: 72 },
+        K4: { raw: 900, volume: 0.68, pct: 68 },
+        K5: { raw: 600, volume: 0.59, pct: 59 },
+      },
+    };
   }
 
   async function refresh() {
@@ -151,6 +175,7 @@
       state.ports = data.ports || [];
       state.apps = data.apps || [];
       state.connected = !!data.connected;
+      if (data.live) state.live = data.live;
       state.demo = false;
     } catch (err) {
       console.warn("get_state failed, using demo data:", err);
@@ -170,15 +195,18 @@
     cfg.APP_MAPPINGS = cfg.APP_MAPPINGS || {};
     cfg.SLIDER_REVERSE = cfg.SLIDER_REVERSE || {};
     cfg.SLIDER_SENSITIVITY = cfg.SLIDER_SENSITIVITY || {};
+    cfg.SLIDER_CURVE = cfg.SLIDER_CURVE || {};
 
     for (let i = 1; i <= numKnobs; i++) {
       const key = "K" + i;
       const sel = document.querySelector(`[data-knob="${key}"]`);
       const rev = document.querySelector(`[data-reverse="${key}"]`);
       const sens = document.querySelector(`[data-sens="${key}"]`);
+      const curve = document.querySelector(`[data-curve="${key}"]`);
       if (sel) cfg.APP_MAPPINGS[key] = sel.value;
       if (rev) cfg.SLIDER_REVERSE[key] = !!rev.checked;
       if (sens) cfg.SLIDER_SENSITIVITY[key] = parseFloat(sens.value) || 1.0;
+      if (curve) cfg.SLIDER_CURVE[key] = curve.value || "linear";
     }
     for (let i = 1; i <= numButtons; i++) {
       const key = "B" + i;
@@ -258,6 +286,52 @@
     }
   }
 
+  function livePctFor(key, mapped) {
+    const live = state.live || {};
+    if (live.stale || !live.knobs || !live.knobs[key]) {
+      return { stale: true, pct: null };
+    }
+    const entry = live.knobs[key];
+    let pct = entry.pct;
+    if (pct == null && entry.volume != null) pct = Math.round(Number(entry.volume) * 100);
+    if (pct == null) return { stale: true, pct: null };
+    pct = Math.max(0, Math.min(100, Math.round(Number(pct))));
+    return { stale: false, pct };
+  }
+
+  function updateFaderDom(key) {
+    const card = document.querySelector(`[data-channel="${key}"]`);
+    if (!card) return;
+    const mapped = !!(state.config && state.config.APP_MAPPINGS && state.config.APP_MAPPINGS[key]);
+    const { stale, pct } = livePctFor(key, mapped);
+    const fill = card.querySelector(".fader-fill");
+    const knob = card.querySelector(".fader-knob");
+    const vol = card.querySelector(".vol");
+    const fader = card.querySelector(".fader");
+    if (!fill || !knob || !vol || !fader) return;
+    if (stale) {
+      fader.classList.add("stale");
+      vol.classList.add("stale");
+      vol.classList.add("dim");
+      fill.style.height = "0%";
+      fill.style.opacity = "0.35";
+      knob.style.bottom = "calc(0% - 7px)";
+      knob.style.opacity = "0.35";
+      vol.textContent = "—";
+      vol.title = "No device / waiting for tray app";
+    } else {
+      fader.classList.remove("stale");
+      vol.classList.remove("stale");
+      vol.classList.toggle("dim", !mapped);
+      fill.style.height = pct + "%";
+      fill.style.opacity = mapped ? "1" : "0.45";
+      knob.style.bottom = "calc(" + pct + "% - 7px)";
+      knob.style.opacity = mapped ? "1" : "0.6";
+      vol.innerHTML = pct + "<span>%</span>";
+      vol.title = "Live volume after reverse + curve";
+    }
+  }
+
   function renderChannels() {
     const root = $("channels");
     root.innerHTML = "";
@@ -269,21 +343,24 @@
       const value = (cfg.APP_MAPPINGS || {})[key] || "";
       const rev = !!(cfg.SLIDER_REVERSE || {})[key];
       const sens = (cfg.SLIDER_SENSITIVITY || {})[key] ?? 1.0;
-      const pct = value ? 72 : 10;
+      const curve = (cfg.SLIDER_CURVE || {})[key] || "linear";
+      const { stale, pct } = livePctFor(key, !!value);
+      const showPct = stale ? 0 : pct;
 
       const card = document.createElement("div");
       card.className = "channel" + (value ? "" : " off");
+      card.dataset.channel = key;
       card.innerHTML = `
         <div class="badge ${badgeClass(value)}">${badgeText(value)}</div>
         <div class="ch-name">${displayName(value)}</div>
         <div class="ch-sub">Knob ${i}</div>
         <div class="fader-wrap">
-          <div class="fader">
-            <div class="fader-fill" style="height:${pct}%;${value ? "" : "opacity:0.45"}"></div>
-            <div class="fader-knob" style="bottom:calc(${pct}% - 7px);${value ? "" : "opacity:0.6"}"></div>
+          <div class="fader ${stale ? "stale" : ""}">
+            <div class="fader-fill" style="height:${showPct}%;${value && !stale ? "" : "opacity:0.45"}"></div>
+            <div class="fader-knob" style="bottom:calc(${showPct}% - 7px);${value && !stale ? "" : "opacity:0.6"}"></div>
           </div>
         </div>
-        <div class="vol ${value ? "" : "dim"}">${value ? pct + "<span>%</span>" : "—"}</div>
+        <div class="vol ${stale || !value ? "dim" : ""} ${stale ? "stale" : ""}">${stale ? "—" : showPct + "<span>%</span>"}</div>
         <div class="controls"></div>
       `;
       const controls = card.querySelector(".controls");
@@ -295,11 +372,16 @@
         cfg.APP_MAPPINGS[key] = sel.value;
         renderChannels();
       });
+
+      const optsCol = document.createElement("div");
+      optsCol.className = "opts-col";
+
       const opts = document.createElement("div");
       opts.className = "opts";
       opts.innerHTML = `
         <label class="chk"><input type="checkbox" data-reverse="${key}" ${rev ? "checked" : ""}/> Reverse</label>
-        <div class="sens">
+        <div class="sens" title="How far the physical slider must move before volume updates (filters jitter)">
+          <span class="sens-label">Jitter</span>
           <span class="sens-val">${Number(sens).toFixed(1)}</span>
           <input type="range" min="0.2" max="2" step="0.1" value="${sens}" data-sens="${key}" />
         </div>
@@ -309,8 +391,22 @@
       range.addEventListener("input", () => {
         sensVal.textContent = Number(range.value).toFixed(1);
       });
+
+      const curveRow = document.createElement("div");
+      curveRow.className = "curve-row";
+      curveRow.innerHTML = `<label for="curve-${key}" title="More travel at the low end">Curve</label>`;
+      const curveSel = document.createElement("select");
+      curveSel.className = "curve-select";
+      curveSel.id = "curve-" + key;
+      curveSel.dataset.curve = key;
+      curveSel.title = "Response curve — gentle/strong give more travel at low volume";
+      fillSelect(curveSel, CURVE_OPTIONS, curve);
+      curveRow.appendChild(curveSel);
+
+      optsCol.appendChild(opts);
+      optsCol.appendChild(curveRow);
       controls.appendChild(sel);
-      controls.appendChild(opts);
+      controls.appendChild(optsCol);
       root.appendChild(card);
     }
   }
@@ -335,14 +431,14 @@
       sel.dataset.btn = key;
       fillSelect(sel, apps, isUrl ? "__url__" : value);
       const url = document.createElement("input");
-      url.className = "burl-input";
+      url.className = "burl-input" + (sel.value === "__url__" ? " show" : "");
       url.dataset.url = key;
       url.placeholder = "URL…";
       url.value = isUrl ? value : "";
-      url.disabled = sel.value !== "__url__";
       sel.addEventListener("change", () => {
-        url.disabled = sel.value !== "__url__";
-        if (sel.value !== "__url__") url.value = "";
+        const show = sel.value === "__url__";
+        url.classList.toggle("show", show);
+        if (!show) url.value = "";
         card.classList.toggle("live", !!sel.value && sel.value !== "");
         card.querySelector(".bdot").classList.toggle("on", !!sel.value);
       });
@@ -386,22 +482,27 @@
     renderButtons();
   }
 
+  function snapshotProfilePayload(cfg) {
+    return {
+      APP_MAPPINGS: { ...cfg.APP_MAPPINGS },
+      SLIDER_REVERSE: { ...cfg.SLIDER_REVERSE },
+      SLIDER_SENSITIVITY: { ...cfg.SLIDER_SENSITIVITY },
+      SLIDER_CURVE: { ...(cfg.SLIDER_CURVE || {}) },
+    };
+  }
+
   async function onSwitchProfile(name) {
     if (!state.config || name === state.config.ACTIVE_PROFILE) return;
     collectFromDom();
     if (state.demo) {
-      // stash current into active, then switch
       const cur = state.config.ACTIVE_PROFILE;
-      state.config.PROFILES[cur] = {
-        APP_MAPPINGS: { ...state.config.APP_MAPPINGS },
-        SLIDER_REVERSE: { ...state.config.SLIDER_REVERSE },
-        SLIDER_SENSITIVITY: { ...state.config.SLIDER_SENSITIVITY },
-      };
+      state.config.PROFILES[cur] = snapshotProfilePayload(state.config);
       const next = state.config.PROFILES[name];
       state.config.ACTIVE_PROFILE = name;
       state.config.APP_MAPPINGS = { ...next.APP_MAPPINGS };
       state.config.SLIDER_REVERSE = { ...next.SLIDER_REVERSE };
       state.config.SLIDER_SENSITIVITY = { ...next.SLIDER_SENSITIVITY };
+      state.config.SLIDER_CURVE = { ...(next.SLIDER_CURVE || {}) };
       render();
       return;
     }
@@ -430,6 +531,7 @@
       const status = await call("get_state");
       state.connected = !!status.connected;
       state.ports = status.ports || state.ports;
+      if (status.live) state.live = status.live;
       renderConn();
     } catch (err) {
       toast(String(err.message || err), true);
@@ -463,11 +565,7 @@
       if (state.demo) {
         if (state.modalMode === "add") {
           if (state.config.PROFILES[name]) throw new Error("Already exists");
-          state.config.PROFILES[name] = {
-            APP_MAPPINGS: { ...state.config.APP_MAPPINGS },
-            SLIDER_REVERSE: { ...state.config.SLIDER_REVERSE },
-            SLIDER_SENSITIVITY: { ...state.config.SLIDER_SENSITIVITY },
-          };
+          state.config.PROFILES[name] = snapshotProfilePayload(state.config);
           state.config.PROFILE_ICONS[name] = name.slice(0, 1).toUpperCase();
           state.config.ACTIVE_PROFILE = name;
         } else if (state.modalMode === "rename") {
@@ -508,6 +606,9 @@
           state.config.ACTIVE_PROFILE = Object.keys(state.config.PROFILES)[0];
           const p = state.config.PROFILES[state.config.ACTIVE_PROFILE];
           state.config.APP_MAPPINGS = { ...p.APP_MAPPINGS };
+          state.config.SLIDER_REVERSE = { ...p.SLIDER_REVERSE };
+          state.config.SLIDER_SENSITIVITY = { ...p.SLIDER_SENSITIVITY };
+          state.config.SLIDER_CURVE = { ...(p.SLIDER_CURVE || {}) };
         }
         closeModal();
         render();
@@ -534,6 +635,37 @@
     $("rail-ctx").classList.remove("show");
   }
 
+  async function pollLive() {
+    if (state.demo) {
+      // Mild demo drift so screenshots look alive
+      const knobs = state.live.knobs || {};
+      Object.keys(knobs).forEach((k, idx) => {
+        const base = [55, 10, 72, 68, 59][idx] || 40;
+        const wobble = Math.round(Math.sin(Date.now() / 800 + idx) * 3);
+        const pct = Math.max(0, Math.min(100, base + wobble));
+        knobs[k] = { raw: Math.round(pct * 10.23), volume: pct / 100, pct };
+      });
+      state.live.stale = false;
+      const n = (state.config && state.config.NUM_KNOBS) || 5;
+      for (let i = 1; i <= n; i++) updateFaderDom("K" + i);
+      return;
+    }
+    try {
+      const live = await call("get_live_levels");
+      state.live = live || { stale: true, knobs: {} };
+      const n = (state.config && state.config.NUM_KNOBS) || 5;
+      for (let i = 1; i <= n; i++) updateFaderDom("K" + i);
+    } catch (_) {
+      /* bridge not ready */
+    }
+  }
+
+  function startLivePoll() {
+    if (state.liveTimer) clearInterval(state.liveTimer);
+    state.liveTimer = setInterval(pollLive, LIVE_POLL_MS);
+    pollLive();
+  }
+
   function wire() {
     $("btn-save").addEventListener("click", onSave);
     $("rail-add").addEventListener("click", () => openModal("add", ""));
@@ -551,24 +683,16 @@
     $("ctx-delete").addEventListener("click", () => {
       closeCtx();
       openModal("rename", state.ctxProfile);
-      // focus delete path
       onModalDelete();
     });
     document.addEventListener("click", (e) => {
       if (!$("rail-ctx").contains(e.target)) closeCtx();
     });
-    $("btn-close").addEventListener("click", async () => {
-      try {
-        await call("close_window");
-      } catch (_) {
-        /* ignore */
-      }
-    });
   }
 
   function onReady() {
     wire();
-    refresh();
+    refresh().then(startLivePoll);
   }
 
   function stamp() {
@@ -583,6 +707,9 @@
           buttons: document.querySelectorAll(".bcard").length,
           profiles: Object.keys(cfg.PROFILES || {}),
           status: (document.getElementById("status-text") || {}).textContent || "",
+          hasFakeChrome: !!document.querySelector(".winbtns, .titlebar .close-btn, #btn-close"),
+          urlVisibleCount: document.querySelectorAll("input.burl-input.show").length,
+          curves: Array.from(document.querySelectorAll("[data-curve]")).map((el) => el.value),
         })
       );
     } catch (e) {
@@ -591,20 +718,22 @@
   }
 
   window.addEventListener("pywebviewready", onReady);
-  // Fallback for opening the HTML directly (screenshots / demos)
   function bootFallback() {
     if (state.config) {
       stamp();
       return;
     }
-    // No pywebview bridge → demo immediately (sync), then try async refresh
     if (!api()) {
       demoBootstrap();
       wire();
       render();
+      startLivePoll();
       stamp();
     }
-    refresh().then(stamp).catch(stamp);
+    refresh().then(() => {
+      startLivePoll();
+      stamp();
+    }).catch(stamp);
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", bootFallback);
@@ -612,6 +741,14 @@
     bootFallback();
   }
 
-  // Expose for headless tests
-  window.__pymixer = { refresh, render, state, collectFromDom, demoBootstrap };
+  window.__pymixer = {
+    refresh,
+    render,
+    state,
+    collectFromDom,
+    demoBootstrap,
+    pollLive,
+    updateFaderDom,
+    stamp,
+  };
 })();

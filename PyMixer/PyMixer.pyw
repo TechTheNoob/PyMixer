@@ -23,7 +23,11 @@ import config_store
 ser = None
 running = True
 config = {}
-config_file_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), 'config.py')
+_APP_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
+config_file_path = os.path.join(_APP_DIR, 'config.py')
+live_levels_file_path = os.path.join(_APP_DIR, config_store.LIVE_LEVELS_FILENAME)
+_last_live_write = 0.0
+LIVE_WRITE_INTERVAL = 0.12  # seconds — throttle disk writes
 
 # --- CONFIGURATION FILE HANDLING ---
 
@@ -165,7 +169,7 @@ def serial_reader_thread():
     """
     Function to run in a separate thread, continuously reading serial data.
     """
-    global ser, running, config
+    global ser, running, config, _last_live_write
     last_button_state = {}
     last_knob_value = {}
     last_config_load_time = time.time()
@@ -201,58 +205,72 @@ def serial_reader_thread():
             knob_values = data[:num_knobs]
             button_values = data[num_knobs:]
 
+            live_knobs = {}
             for i, knob_value in enumerate(knob_values):
                 key = f'K{i + 1}'
                 if key not in last_knob_value:
                     last_knob_value[key] = knob_value
 
+                if config.get('SLIDER_REVERSE', {}).get(key, False):
+                    scaled_value = 1023.0 - knob_value
+                else:
+                    scaled_value = float(knob_value)
+
+                normalized = max(0.0, min(1.0, scaled_value / 1023.0))
+                curve = config.get('SLIDER_CURVE', {}).get(key, 'linear')
+                volume_level = config_store.apply_curve(normalized, curve)
+                live_knobs[key] = {
+                    'raw': int(knob_value),
+                    'volume': round(volume_level, 4),
+                    'pct': int(round(volume_level * 100)),
+                }
+
                 sensitivity = config.get('SLIDER_SENSITIVITY', {}).get(key, 1.0)
-                if abs(knob_value - last_knob_value[key]) < 10 / sensitivity:
+                try:
+                    sens = float(sensitivity) if float(sensitivity) > 0 else 1.0
+                except (TypeError, ValueError):
+                    sens = 1.0
+                if abs(knob_value - last_knob_value[key]) < 10 / sens:
                     continue
 
-                if key in config.get('APP_MAPPINGS', {}):
-                    app_name = config['APP_MAPPINGS'][key]
-                    
-                    if config.get('SLIDER_REVERSE', {}).get(key, False):
-                        scaled_value = 1023.0 - knob_value
-                    else:
-                        scaled_value = knob_value
-                    
-                    volume_level = scaled_value / 1023.0
-                    
+                app_name = config.get('APP_MAPPINGS', {}).get(key, '')
+                if app_name:
                     if app_name == "focused_app":
                         focused_app_name = get_focused_app_process_name()
                         if focused_app_name:
-                            
-                            # --- START: MODIFIED LOGIC ---
                             # Check if the focused app already has a dedicated knob
                             all_mappings = config.get('APP_MAPPINGS', {})
-                            
-                            # Get a list of all *other* knob mappings (excluding this one)
                             other_knob_mappings = [
-                                mapped_app for k, mapped_app in all_mappings.items() 
+                                mapped_app for k, mapped_app in all_mappings.items()
                                 if k.startswith('K') and k != key
                             ]
 
                             if focused_app_name in other_knob_mappings:
                                 # This app has its own knob, so the 'focused_app' knob should ignore it.
-                                # print(f"Ignoring focused app '{focused_app_name}' as it has a dedicated knob.")
                                 pass
                             else:
-                                # This app does NOT have a dedicated knob, so control it.
                                 session = get_audio_session(focused_app_name)
                                 if session:
                                     set_app_volume(session, volume_level)
-                            # --- END: MODIFIED LOGIC ---
-                                    
+
                     elif app_name == 'explorer.exe':
                         set_master_volume(volume_level)
                     else:
                         session = get_audio_session(app_name)
                         if session:
                             set_app_volume(session, volume_level)
-                
+
                 last_knob_value[key] = knob_value
+
+            # Publish live fader positions for the settings UI (throttled).
+            now = time.time()
+            if now - _last_live_write >= LIVE_WRITE_INTERVAL:
+                config_store.write_live_levels(
+                    live_knobs,
+                    live_levels_file_path,
+                    connected=True,
+                )
+                _last_live_write = now
             
             for i, button_value in enumerate(button_values):
                 key = f'B{i + 1}'
