@@ -19,6 +19,7 @@ import psutil
 import win32process
 import config_store
 import tray_popup
+import tray_menu
 
 # --- GLOBAL VARIABLES ---
 ser = None
@@ -30,6 +31,7 @@ live_levels_file_path = os.path.join(_APP_DIR, config_store.LIVE_LEVELS_FILENAME
 _last_live_write = 0.0
 LIVE_WRITE_INTERVAL = 0.12  # seconds — throttle disk writes
 _tray_icon = None
+_menu_fingerprint = None
 
 # --- CONFIGURATION FILE HANDLING ---
 
@@ -180,7 +182,7 @@ def serial_reader_thread():
     """
     Function to run in a separate thread, continuously reading serial data.
     """
-    global ser, running, config, _last_live_write
+    global ser, running, config, _last_live_write, _menu_fingerprint
     last_button_state = {}
     last_knob_value = {}
     last_config_load_time = time.time()
@@ -189,14 +191,25 @@ def serial_reader_thread():
 
     try:
         while running:
+            # Reload config every 5 seconds even if the port is down, so Settings
+            # profile add/rename/delete still refreshes the native tray menu.
+            if time.time() - last_config_load_time > 5:
+                before = tray_menu.menu_fingerprint(config) if config else None
+                load_config()
+                after = tray_menu.menu_fingerprint(config)
+                last_config_load_time = time.time()
+                if before is None or tray_menu.profiles_changed(before, after):
+                    _menu_fingerprint = after
+                    try:
+                        refresh_tray_menu()
+                    except Exception:
+                        pass
+                else:
+                    _menu_fingerprint = after
+
             if not ser or not ser.is_open:
                 time.sleep(1)
                 continue
-
-            # Reload config every 5 seconds to pick up changes from the GUI
-            if time.time() - last_config_load_time > 5:
-                load_config()
-                last_config_load_time = time.time()
 
             line = ser.readline().decode('utf-8').strip()
             if not line:
@@ -429,56 +442,41 @@ def reconnect_serial(icon=None, item=None):
 def build_tray_menu():
     """
     Native Win32 fallback menu (right-click).
-    Left-click uses the custom popup via the default item.
+    Uses pystray dynamic Menu(callable) / text=callable / checked=callable so
+    every open and every update_menu() rebuild sees current config_store state.
     """
-    load_config()
-    active = config.get('ACTIVE_PROFILE', 'Default')
-    header = f"PyMixer · {active}"
-
-    profile_items = []
-    for name in config_store.list_profile_names(config):
-        profile_items.append(
-            MenuItem(
-                name,
-                _make_profile_switcher(name),
-                checked=_profile_is_active(name),
-                radio=True,
-            )
-        )
-    if not profile_items:
-        profile_items.append(
-            MenuItem('Default', _make_profile_switcher('Default'), checked=True, radio=True)
-        )
-    profiles_menu = Menu(*profile_items)
-
-    port = config.get('SERIAL_PORT', '?')
-    connected = bool(ser and getattr(ser, 'is_open', False))
-    status_label = f"{'●' if connected else '○'}  {port}"
-
-    return Menu(
-        # default=True → left-click opens the custom popup
-        MenuItem('Open PyMixer', open_tray_popup, default=True, visible=False),
-        MenuItem(header, None, enabled=False),
-        MenuItem(status_label, None, enabled=False),
-        Menu.SEPARATOR,
-        MenuItem('⚙  Settings', open_config_gui),
-        MenuItem('☰  Profiles', profiles_menu),
-        Menu.SEPARATOR,
-        MenuItem('↻  Reload config', reload_config_from_disk),
-        MenuItem('↻  Reconnect', reconnect_serial),
-        Menu.SEPARATOR,
-        MenuItem('✕  Quit', exit_program),
+    return tray_menu.build_pystray_menu(
+        config_path=config_file_path,
+        open_popup=open_tray_popup,
+        open_settings=open_config_gui,
+        reload_config=reload_config_from_disk,
+        reconnect=reconnect_serial,
+        quit_app=exit_program,
+        make_switcher=_make_profile_switcher,
+        is_connected=lambda: bool(ser and getattr(ser, 'is_open', False)),
     )
 
 
 def refresh_tray_menu():
-    global _tray_icon
+    """Rebuild HMENU on Windows via update_menu after profile/config changes."""
+    global _tray_icon, _menu_fingerprint, config
+    try:
+        # Keep in-memory config aligned with disk before evaluating callables
+        config = config_store.load_config(config_file_path)
+        _menu_fingerprint = tray_menu.menu_fingerprint(config)
+    except Exception:
+        pass
     if _tray_icon is not None:
         try:
             _tray_icon.menu = build_tray_menu()
             _tray_icon.update_menu()
+            try:
+                _tray_icon.title = tray_menu.header_label(config)
+            except Exception:
+                pass
         except Exception as e:
             print(f"Could not refresh tray menu: {e}")
+
 
 
 def exit_program(icon=None, item=None):
@@ -503,6 +501,7 @@ def _flag_watcher():
         'quit': 0.0,
         'reconnect': 0.0,
         'settings': 0.0,
+        'refresh': 0.0,
     }
     while running:
         time.sleep(0.35)
@@ -538,6 +537,17 @@ def _flag_watcher():
                     except OSError:
                         pass
                     # settings already launched by popup; just refresh menu
+                    refresh_tray_menu()
+            rf = tray_popup.refresh_flag_path()
+            if os.path.exists(rf):
+                m = os.path.getmtime(rf)
+                if m > seen['refresh']:
+                    seen['refresh'] = m
+                    try:
+                        os.unlink(rf)
+                    except OSError:
+                        pass
+                    load_config()
                     refresh_tray_menu()
         except Exception:
             pass
@@ -583,6 +593,8 @@ def setup_and_run_icon():
         # Keep running so the user can open Settings / Reconnect from the tray
         ser = None
 
+    global _menu_fingerprint
+    _menu_fingerprint = tray_menu.menu_fingerprint(config)
     icon_image = load_tray_icon_image()
     menu = build_tray_menu()
 

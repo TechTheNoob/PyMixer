@@ -102,12 +102,12 @@
     if (state.demo) {
       state.data.active = name;
       render();
-      setTimeout(() => call("close").catch(() => window.close && window.close()), 120);
+      setTimeout(() => call("dismiss").catch(() => {}), 120);
       return;
     }
     try {
       await call("switch_profile", name);
-      await call("close");
+      await call("dismiss");
     } catch (e) {
       console.warn(e);
     }
@@ -117,7 +117,7 @@
     if (state.demo) return;
     try {
       await call("open_settings");
-      await call("close");
+      await call("dismiss");
     } catch (e) {
       console.warn(e);
     }
@@ -166,16 +166,20 @@
     $("btn-settings").addEventListener("click", onSettings);
     $("btn-reconnect").addEventListener("click", onReconnect);
     $("btn-quit").addEventListener("click", onQuit);
+    let blurTimer = null;
+    const dismiss = () => call("dismiss").catch(() => {});
     window.addEventListener("keydown", (e) => {
-      if (e.key === "Escape") {
-        call("close").catch(() => {});
-      }
+      if (e.key === "Escape") dismiss();
     });
     window.addEventListener("blur", () => {
-      // Close on focus loss (frameless popup)
-      setTimeout(() => {
-        if (!document.hasFocus()) call("close").catch(() => {});
-      }, 150);
+      // Debounce: tray icon click can blur then immediately re-show
+      clearTimeout(blurTimer);
+      blurTimer = setTimeout(() => {
+        if (!document.hasFocus()) dismiss();
+      }, 220);
+    });
+    window.addEventListener("focus", () => {
+      clearTimeout(blurTimer);
     });
   }
 

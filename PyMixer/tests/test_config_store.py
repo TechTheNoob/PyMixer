@@ -510,5 +510,146 @@ class TrayPopupTests(unittest.TestCase):
         self.assertEqual(live["knobs"]["K1"]["pct"], 10)
 
 
+
+
+class DynamicTrayMenuTests(unittest.TestCase):
+    """Profiles submenu / header must re-evaluate from disk every time."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmpdir.name, "config.py")
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_add_rename_delete_and_switch_update_evaluated_menu(self):
+        import tray_menu
+
+        cfg = config_store.default_config()
+        config_store.save_config(cfg, self.path)
+
+        items = tray_menu.evaluated_profile_items(path=self.path)
+        self.assertEqual([i["name"] for i in items], ["Default"])
+        self.assertTrue(items[0]["checked"])
+        self.assertEqual(tray_menu.header_label(path=self.path), "PyMixer · Default")
+        fp1 = tray_menu.menu_fingerprint(config_store.load_config(self.path))
+
+        cfg = config_store.load_config(self.path)
+        cfg = config_store.add_profile(cfg, "Gaming")
+        config_store.save_config(cfg, self.path)
+        items = tray_menu.evaluated_profile_items(path=self.path)
+        names = [i["name"] for i in items]
+        self.assertIn("Gaming", names)
+        self.assertIn("Default", names)
+        self.assertEqual(tray_menu.header_label(path=self.path), "PyMixer · Gaming")
+        checked = {i["name"]: i["checked"] for i in items}
+        self.assertTrue(checked["Gaming"])
+        self.assertFalse(checked["Default"])
+        fp2 = tray_menu.menu_fingerprint(config_store.load_config(self.path))
+        self.assertTrue(tray_menu.profiles_changed(fp1, fp2))
+
+        cfg = config_store.load_config(self.path)
+        cfg = config_store.rename_profile(cfg, "Gaming", "Stream")
+        config_store.save_config(cfg, self.path)
+        items = tray_menu.evaluated_profile_items(path=self.path)
+        names = [i["name"] for i in items]
+        self.assertIn("Stream", names)
+        self.assertNotIn("Gaming", names)
+        self.assertEqual(tray_menu.header_label(path=self.path), "PyMixer · Stream")
+
+        cfg = config_store.load_config(self.path)
+        cfg = config_store.switch_profile(cfg, "Default")
+        config_store.save_config(cfg, self.path)
+        items = tray_menu.evaluated_profile_items(path=self.path)
+        checked = {i["name"]: i["checked"] for i in items}
+        self.assertTrue(checked["Default"])
+        self.assertFalse(checked["Stream"])
+        self.assertEqual(tray_menu.header_label(path=self.path), "PyMixer · Default")
+
+        cfg = config_store.load_config(self.path)
+        cfg = config_store.delete_profile(cfg, "Stream")
+        config_store.save_config(cfg, self.path)
+        items = tray_menu.evaluated_profile_items(path=self.path)
+        self.assertEqual([i["name"] for i in items], ["Default"])
+        fp3 = tray_menu.menu_fingerprint(config_store.load_config(self.path))
+        self.assertTrue(tray_menu.profiles_changed(fp2, fp3))
+
+
+class TrayPopupDismissTests(unittest.TestCase):
+    def tearDown(self):
+        import tray_popup
+        tray_popup._window = None
+        tray_popup._closing = False
+        tray_popup._hidden = False
+        tray_popup._shown_at = 0.0
+
+    def test_safe_dismiss_hides_once_and_skips_double(self):
+        import tray_popup
+
+        class FakeWin:
+            def __init__(self):
+                self.hidden = 0
+                self.destroyed = 0
+
+            def hide(self):
+                self.hidden += 1
+
+            def destroy(self):
+                self.destroyed += 1
+
+        win = FakeWin()
+        tray_popup._window = win
+        tray_popup._hidden = False
+        tray_popup._closing = False
+        tray_popup._shown_at = 0.0  # outside grace
+
+        r1 = tray_popup.safe_dismiss(hide_only=True)
+        self.assertTrue(r1["ok"])
+        self.assertEqual(r1["action"], "hide")
+        self.assertFalse(r1["skipped"])
+        self.assertEqual(win.hidden, 1)
+        self.assertEqual(win.destroyed, 0)
+        self.assertTrue(tray_popup._hidden)
+
+        r2 = tray_popup.safe_dismiss(hide_only=True)
+        self.assertTrue(r2["skipped"])
+        self.assertEqual(win.hidden, 1)
+
+    def test_blur_grace_skips_dismiss(self):
+        import tray_popup
+        import time as _time
+
+        class FakeWin:
+            def hide(self):
+                raise AssertionError("should not hide during grace")
+
+        tray_popup._window = FakeWin()
+        tray_popup._hidden = False
+        tray_popup._shown_at = _time.time()
+        r = tray_popup.safe_dismiss(hide_only=True)
+        self.assertTrue(r["skipped"])
+        self.assertEqual(r.get("reason"), "blur_grace")
+
+    def test_hard_quit_destroys_once(self):
+        import tray_popup
+
+        class FakeWin:
+            def __init__(self):
+                self.destroyed = 0
+
+            def destroy(self):
+                self.destroyed += 1
+
+        win = FakeWin()
+        tray_popup._window = win
+        tray_popup._closing = False
+        r1 = tray_popup.safe_dismiss(hide_only=False)
+        self.assertEqual(r1["action"], "destroy")
+        self.assertEqual(win.destroyed, 1)
+        r2 = tray_popup.safe_dismiss(hide_only=False)
+        self.assertTrue(r2["skipped"])
+        self.assertEqual(win.destroyed, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

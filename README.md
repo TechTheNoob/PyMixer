@@ -43,7 +43,8 @@ See `requirements.txt`: `pyserial`, `pycaw`, `comtypes`, `pystray`, `Pillow`, `p
 
 - **Left-click** the tray icon → custom frameless popup (pywebview), anchored bottom-right above the taskbar via `SPI_GETWORKAREA`
 - **Right-click** → native Windows menu (Settings, Profiles with radio check, Reload, Reconnect, Quit) — also the fallback if pywebview is missing
-- Popup closes on blur, Esc, or after an action; it runs in a **separate process** so the serial reader is never blocked
+- Popup **hides** (warm process) on blur / Esc / action — no destroy churn, so Windows shouldn't show a .NET/WebView2 error dialog
+- Native **Profiles** submenu (and header / COM status) re-read `config.py` every time the menu opens or after Settings changes (~5 s reload + `update_menu`)
 - Native Win32 menus cannot use custom fonts/colors; the popup is where the Discord-dark look lives
 
 ## How profiles work

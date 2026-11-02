@@ -10,3 +10,4 @@ pymixer_tray_quit.flag
 pymixer_tray_reconnect.flag
 pymixer_tray_open_settings.flag
 PyMixer/pymixer_tray_*
+pymixer_tray_refresh.flag

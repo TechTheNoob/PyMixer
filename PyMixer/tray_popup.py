@@ -1,9 +1,9 @@
 """
 Frameless Discord-dark tray popup for PyMixer.
 
-Opened from the tray icon's left-click (pystray default action). Right-click
-keeps the native pystray menu as a fallback. Positions itself in the bottom-
-right of the Windows work area (above the taskbar).
+Left-click opens this (warm process). Prefer hide-over-destroy on blur so
+WinForms/WebView2 does not throw .NET dialogs. Esc / action / blur share one
+safe dismiss path. Quit still ends the process after the webview loop returns.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import atexit
 import os
 import subprocess
 import sys
-import tempfile
+import threading
 import time
 from typing import Any, Dict, Optional, Tuple
 
@@ -30,37 +30,49 @@ SHOW_NAME = "pymixer_tray_popup.show"
 QUIT_FLAG = "pymixer_tray_quit.flag"
 RECONNECT_FLAG = "pymixer_tray_reconnect.flag"
 OPEN_SETTINGS_FLAG = "pymixer_tray_open_settings.flag"
+REFRESH_FLAG = "pymixer_tray_refresh.flag"
 
-
-def _runtime_dir() -> str:
-    return HERE
+# Process-local dismiss / visibility state
+_window = None
+_closing = False  # hard quit in progress
+_hidden = False
+_shown_at = 0.0
+_BLUR_GRACE_S = 0.45  # ignore blur right after show (tray click race)
 
 
 def lock_path() -> str:
-    return os.path.join(_runtime_dir(), LOCK_NAME)
+    return os.path.join(HERE, LOCK_NAME)
 
 
 def show_path() -> str:
-    return os.path.join(_runtime_dir(), SHOW_NAME)
+    return os.path.join(HERE, SHOW_NAME)
 
 
 def quit_flag_path() -> str:
-    return os.path.join(_runtime_dir(), QUIT_FLAG)
+    return os.path.join(HERE, QUIT_FLAG)
 
 
 def reconnect_flag_path() -> str:
-    return os.path.join(_runtime_dir(), RECONNECT_FLAG)
+    return os.path.join(HERE, RECONNECT_FLAG)
 
 
 def open_settings_flag_path() -> str:
-    return os.path.join(_runtime_dir(), OPEN_SETTINGS_FLAG)
+    return os.path.join(HERE, OPEN_SETTINGS_FLAG)
+
+
+def refresh_flag_path() -> str:
+    return os.path.join(HERE, REFRESH_FLAG)
+
+
+def _touch(path: str) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(str(time.time()))
+    except OSError:
+        pass
 
 
 def work_area_rect() -> Tuple[int, int, int, int]:
-    """
-    Return (left, top, right, bottom) of the Windows work area.
-    Falls back to a 1920x1080-ish rect on non-Windows / errors.
-    """
     if sys.platform != "win32":
         return (0, 0, 1280, 720)
     try:
@@ -85,13 +97,9 @@ def popup_position(
     margin: int = POPUP_MARGIN,
     work_area: Optional[Tuple[int, int, int, int]] = None,
 ) -> Tuple[int, int]:
-    """Bottom-right of the work area, above the taskbar."""
     left, top, right, bottom = work_area if work_area is not None else work_area_rect()
-    x = right - width - margin
-    y = bottom - height - margin
-    # Clamp into work area
-    x = max(left + margin, x)
-    y = max(top + margin, y)
+    x = max(left + margin, right - width - margin)
+    y = max(top + margin, bottom - height - margin)
     return int(x), int(y)
 
 
@@ -102,10 +110,7 @@ def _pid_alive(pid: int) -> bool:
         try:
             import ctypes
 
-            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
-            handle = ctypes.windll.kernel32.OpenProcess(
-                PROCESS_QUERY_LIMITED_INFORMATION, False, pid
-            )
+            handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
             if handle:
                 ctypes.windll.kernel32.CloseHandle(handle)
                 return True
@@ -143,23 +148,14 @@ def _clear_lock() -> None:
 
 
 def request_show() -> bool:
-    """
-    Ask an existing popup to raise, or report that a new one should start.
-    Returns True if an existing popup was signaled.
-    """
     pid = _read_lock_pid()
     if pid and _pid_alive(pid):
-        try:
-            with open(show_path(), "w", encoding="utf-8") as f:
-                f.write(str(time.time()))
-            return True
-        except OSError:
-            return False
+        _touch(show_path())
+        return True
     return False
 
 
 def launch_popup_process() -> None:
-    """Spawn the popup in a separate process (non-blocking for the tray)."""
     if request_show():
         return
     python_executable = sys.executable
@@ -169,23 +165,103 @@ def launch_popup_process() -> None:
             python_executable = pythonw
     script = os.path.join(HERE, "tray_popup.py")
     try:
-        subprocess.Popen(
-            [python_executable, script],
-            cwd=HERE,
-            close_fds=True,
-        )
+        subprocess.Popen([python_executable, script], cwd=HERE, close_fds=True)
     except Exception as exc:
         print(f"Could not launch tray popup: {exc}")
+
+
+def _suppress_dotnet_crash_dialogs() -> None:
+    """Best-effort: hide Windows critical-error / GPF boxes as a backstop."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        SEM_FAILCRITICALERRORS = 0x0001
+        SEM_NOGPFAULTERRORBOX = 0x0002
+        SEM_NOOPENFILEERRORBOX = 0x8000
+        ctypes.windll.kernel32.SetErrorMode(
+            SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+        )
+    except Exception:
+        pass
+
+
+def safe_dismiss(*, hide_only: bool = True) -> Dict[str, Any]:
+    """
+    Single close path used by blur / Esc / action clicks.
+
+    Default: hide the window and keep the process warm (avoids WebView2
+    destroy-from-blur crashes). Pass hide_only=False only for hard quit.
+    """
+    global _closing, _hidden, _window
+    result = {"ok": True, "action": "hide" if hide_only else "destroy", "skipped": False}
+
+    if hide_only:
+        # Debounce: blur immediately after show (tray icon click) — ignore
+        if (time.time() - _shown_at) < _BLUR_GRACE_S:
+            result["skipped"] = True
+            result["reason"] = "blur_grace"
+            return result
+        if _hidden or _window is None:
+            result["skipped"] = True
+            result["reason"] = "already_hidden"
+            return result
+        try:
+            _window.hide()
+            _hidden = True
+        except Exception as exc:
+            result["ok"] = False
+            result["error"] = str(exc)
+        return result
+
+    # Hard quit — destroy once, then let webview loop exit
+    if _closing:
+        result["skipped"] = True
+        result["reason"] = "already_closing"
+        return result
+    _closing = True
+    try:
+        if _window is not None:
+            try:
+                _window.destroy()
+            except Exception as exc:
+                result["ok"] = False
+                result["error"] = str(exc)
+    finally:
+        _window = None
+    return result
+
+
+def safe_show() -> None:
+    global _hidden, _shown_at, _window
+    if _window is None or _closing:
+        return
+    try:
+        x, y = popup_position()
+        try:
+            _window.move(x, y)
+        except Exception:
+            pass
+        _window.show()
+        try:
+            _window.on_top = True
+        except Exception:
+            pass
+        _hidden = False
+        _shown_at = time.time()
+    except Exception as exc:
+        print(f"safe_show failed: {exc}")
 
 
 class PopupApi:
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = config_file or config_store.config_path(HERE)
         self.live_file = config_store.live_levels_path(HERE)
-        self._window = None
 
     def bind_window(self, window) -> None:
-        self._window = window
+        global _window
+        _window = window
 
     def get_popup_state(self) -> Dict[str, Any]:
         cfg = config_store.load_config(self.config_file)
@@ -198,7 +274,6 @@ class PopupApi:
         except Exception:
             ports_ok = False
         live = config_store.read_live_levels(self.live_file)
-        # Prefer live.connected when fresh
         connected = (not live.get("stale")) or ports_ok
         return {
             "active": cfg.get("ACTIVE_PROFILE", "Default"),
@@ -215,15 +290,11 @@ class PopupApi:
         cfg = config_store.load_config(self.config_file)
         cfg = config_store.switch_profile(cfg, name)
         config_store.save_config(cfg, self.config_file)
+        _touch(refresh_flag_path())
         return self.get_popup_state()
 
     def open_settings(self) -> None:
-        # Signal the tray process; also launch settings directly as a backup.
-        try:
-            with open(open_settings_flag_path(), "w", encoding="utf-8") as f:
-                f.write(str(time.time()))
-        except OSError:
-            pass
+        _touch(open_settings_flag_path())
         gui = os.path.join(HERE, "config_gui_web.py")
         if not os.path.exists(gui):
             gui = os.path.join(HERE, "config_gui.py")
@@ -236,39 +307,35 @@ class PopupApi:
             subprocess.Popen([python_executable, gui], cwd=HERE, close_fds=True)
         except Exception as exc:
             print(f"Could not open settings: {exc}")
+        self.dismiss()
 
     def reconnect(self) -> Dict[str, Any]:
-        try:
-            with open(reconnect_flag_path(), "w", encoding="utf-8") as f:
-                f.write(str(time.time()))
-        except OSError:
-            pass
+        _touch(reconnect_flag_path())
+        self.dismiss()
         return self.get_popup_state()
 
     def quit_app(self) -> None:
-        try:
-            with open(quit_flag_path(), "w", encoding="utf-8") as f:
-                f.write(str(time.time()))
-        except OSError:
-            pass
-        self.close()
+        _touch(quit_flag_path())
+        # Hard close — tray will exit; end this process after destroy
+        safe_dismiss(hide_only=False)
 
-    def close(self) -> None:
-        if self._window is not None:
-            try:
-                self._window.destroy()
-            except Exception:
-                pass
+    def dismiss(self) -> Dict[str, Any]:
+        """JS blur / Esc / after-action — hide, keep warm."""
+        return safe_dismiss(hide_only=True)
+
+    # Back-compat aliases used by older JS
+    def close(self) -> Dict[str, Any]:
+        return self.dismiss()
 
 
 def run() -> int:
+    _suppress_dotnet_crash_dialogs()
     try:
         import webview
     except ImportError:
         print("pywebview is not installed; tray popup unavailable.")
         return 2
 
-    # Singleton lock
     existing = _read_lock_pid()
     if existing and _pid_alive(existing) and existing != os.getpid():
         request_show()
@@ -295,30 +362,35 @@ def run() -> int:
         shadow=True,
     )
     api.bind_window(window)
+    global _shown_at, _hidden
+    _shown_at = time.time()
+    _hidden = False
+
+    def _on_closed():
+        # If the host closed us unexpectedly, just clear lock — don't panic.
+        _clear_lock()
+
+    try:
+        window.events.closed += _on_closed
+    except Exception:
+        pass
 
     def _poll_show():
-        # If another left-click asks us to show while still open, re-assert on top.
         last = 0.0
-        while True:
-            time.sleep(0.25)
+        while not _closing:
+            time.sleep(0.2)
             try:
                 if os.path.exists(show_path()):
                     mtime = os.path.getmtime(show_path())
                     if mtime > last:
                         last = mtime
                         try:
-                            window.show()
-                            window.on_top = True
-                        except Exception:
-                            pass
-                        try:
                             os.unlink(show_path())
                         except OSError:
                             pass
+                        safe_show()
             except Exception:
                 pass
-
-    import threading
 
     threading.Thread(target=_poll_show, daemon=True).start()
     webview.start(debug=False)
