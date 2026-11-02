@@ -361,19 +361,25 @@ class TrayRuntimeSimulationTests(unittest.TestCase):
         self.assertLess(rev, 0.2)
 
     def test_live_levels_published_for_settings_ui(self):
-        # Tray writes; settings UI reads (separate process simulation)
-        knobs = {}
-        for i, raw in enumerate([100, 400, 700, 900, 50], start=1):
-            key = f"K{i}"
-            vol = self._compute_volume(raw, reverse=True, curve="gentle")
-            knobs[key] = {"raw": raw, "volume": round(vol, 4), "pct": int(round(vol * 100))}
-        config_store.write_live_levels(knobs, self.live_path, connected=True)
+        # Settings/popup read Windows volumes directly via pycaw (mocked here)
+        import volume_read
 
-        # Settings-side poll
-        live = config_store.read_live_levels(self.live_path)
-        self.assertFalse(live["stale"])
-        self.assertIn("K3", live["knobs"])
-        self.assertEqual(live["knobs"]["K1"]["raw"], 100)
+        cfg = config_store.default_config()
+        cfg["APP_MAPPINGS"]["K1"] = "explorer.exe"
+        cfg["APP_MAPPINGS"]["K2"] = "Discord.exe"
+        orig_m = volume_read.get_master_volume
+        orig_a = volume_read.get_app_volume
+        volume_read.get_master_volume = lambda: 0.61
+        volume_read.get_app_volume = lambda name: 0.4 if "discord" in name.lower() else None
+        try:
+            live = volume_read.live_levels_from_config(cfg)
+            self.assertFalse(live["stale"])
+            self.assertEqual(live["knobs"]["K1"]["pct"], 61)
+            self.assertEqual(live["knobs"]["K2"]["pct"], 40)
+            self.assertEqual(live["source"], "pycaw")
+        finally:
+            volume_read.get_master_volume = orig_m
+            volume_read.get_app_volume = orig_a
 
     def test_gui_save_picked_up_on_reload(self):
         """Settings process saves; tray 5s reload picks up new active profile data."""
@@ -407,7 +413,7 @@ class ApiBridgeTests(unittest.TestCase):
 
         self.api = config_gui_web.Api(config_file=self.path)
         # Point live file into tmpdir
-        self.api.live_file = os.path.join(self.tmpdir.name, "live_levels.json")
+        self.api.live_file = None
 
     def tearDown(self):
         self.tmpdir.cleanup()
@@ -439,15 +445,22 @@ class ApiBridgeTests(unittest.TestCase):
         self.assertNotIn("Stream", updated["PROFILES"])
 
     def test_get_live_levels(self):
+        import volume_read
+        # Without pycaw sessions, levels are empty/stale
         live = self.api.get_live_levels()
-        self.assertTrue(live["stale"])
-        config_store.write_live_levels(
-            {"K1": {"raw": 10, "volume": 0.01, "pct": 1}},
-            self.api.live_file,
-        )
-        live = self.api.get_live_levels()
-        self.assertFalse(live["stale"])
-        self.assertEqual(live["knobs"]["K1"]["pct"], 1)
+        self.assertIn("knobs", live)
+        # Inject mappings + mock volumes
+        cfg = config_store.load_config(self.path)
+        cfg["APP_MAPPINGS"]["K1"] = "explorer.exe"
+        config_store.save_config(cfg, self.path)
+        orig = volume_read.get_master_volume
+        volume_read.get_master_volume = lambda: 0.55
+        try:
+            live = self.api.get_live_levels()
+            self.assertEqual(live["knobs"]["K1"]["pct"], 55)
+            self.assertFalse(live["stale"])
+        finally:
+            volume_read.get_master_volume = orig
 
 
 class TrayPopupTests(unittest.TestCase):
@@ -490,7 +503,6 @@ class TrayPopupTests(unittest.TestCase):
         config_store.save_config(cfg, self.path)
 
         api = tray_popup.PopupApi(config_file=self.path)
-        api.live_file = self.live
         state = api.get_popup_state()
         self.assertEqual(state["active"], "Gaming")
         self.assertIn("Default", state["profiles"])
@@ -502,12 +514,15 @@ class TrayPopupTests(unittest.TestCase):
         self.assertEqual(loaded["ACTIVE_PROFILE"], "Default")
         self.assertEqual(loaded["APP_MAPPINGS"]["K1"], "Discord.exe")
 
-        config_store.write_live_levels(
-            {"K1": {"raw": 100, "volume": 0.1, "pct": 10}}, self.live
-        )
-        live = api.get_live()
-        self.assertFalse(live["stale"])
-        self.assertEqual(live["knobs"]["K1"]["pct"], 10)
+        import volume_read
+        orig = volume_read.get_app_volume
+        volume_read.get_app_volume = lambda name: 0.1 if "discord" in name.lower() else None
+        try:
+            live = api.get_live()
+            self.assertFalse(live["stale"])
+            self.assertEqual(live["knobs"]["K1"]["pct"], 10)
+        finally:
+            volume_read.get_app_volume = orig
 
 
 
@@ -649,6 +664,172 @@ class TrayPopupDismissTests(unittest.TestCase):
         r2 = tray_popup.safe_dismiss(hide_only=False)
         self.assertTrue(r2["skipped"])
         self.assertEqual(win.destroyed, 1)
+
+
+
+class AppCatalogTests(unittest.TestCase):
+    def test_noise_filter_and_friendly_labels(self):
+        import app_catalog
+
+        self.assertTrue(app_catalog.is_noise_process("AggregatorHost.exe"))
+        self.assertTrue(app_catalog.is_noise_process("BraveCrashHandler.exe"))
+        self.assertTrue(app_catalog.is_noise_process("svchost.exe"))
+        self.assertTrue(app_catalog.is_noise_process("RuntimeBroker.exe"))
+        self.assertTrue(app_catalog.is_noise_process("ApplicationFrameHost.exe"))
+        self.assertFalse(app_catalog.is_noise_process("Discord.exe"))
+        self.assertFalse(app_catalog.is_noise_process("chrome.exe"))
+        self.assertEqual(app_catalog.friendly_app_label("Discord.exe"), "Discord")
+        self.assertEqual(app_catalog.friendly_app_label("spotify.exe"), "Spotify")
+
+    def test_build_catalog_groups_and_keeps_current(self):
+        import app_catalog
+
+        cat = app_catalog.build_app_catalog(
+            current="RareApp.exe",
+            audio=["Discord.exe", "spotify.exe"],
+            running=["Discord.exe", "Code.exe", "AggregatorHost.exe", "RareOther.exe"],
+        )
+        audio_vals = [e["value"] for e in cat["audio"]]
+        run_vals = [e["value"] for e in cat["running"]]
+        self.assertEqual(audio_vals, ["Discord.exe", "spotify.exe"])
+        # Discord deduped out of running; AggregatorHost filtered by caller already
+        self.assertIn("Code.exe", run_vals)
+        self.assertNotIn("Discord.exe", run_vals)
+        self.assertIsNotNone(cat["current"])
+        self.assertEqual(cat["current"]["value"], "RareApp.exe")
+        self.assertEqual(cat["current"]["label"], "RareApp")
+
+
+class VolumeReadTests(unittest.TestCase):
+    def test_live_levels_from_mappings_with_mocks(self):
+        import volume_read
+
+        calls = {}
+
+        def fake_master():
+            calls["master"] = True
+            return 0.42
+
+        def fake_app(name):
+            calls.setdefault("apps", []).append(name)
+            if name.lower() == "discord.exe":
+                return 0.75
+            return None
+
+        def fake_focus():
+            return "chrome.exe"
+
+        orig = (
+            volume_read.get_master_volume,
+            volume_read.get_app_volume,
+            volume_read.get_focused_process_name,
+        )
+        volume_read.get_master_volume = fake_master
+        volume_read.get_app_volume = lambda n: fake_app(n) if n != "chrome.exe" else 0.33
+        volume_read.get_focused_process_name = fake_focus
+        try:
+            cfg = {
+                "NUM_KNOBS": 5,
+                "APP_MAPPINGS": {
+                    "K1": "explorer.exe",
+                    "K2": "Discord.exe",
+                    "K3": "focused_app",
+                    "K4": "",
+                    "K5": "Missing.exe",
+                },
+            }
+            live = volume_read.live_levels_from_config(cfg)
+            self.assertEqual(live["knobs"]["K1"]["pct"], 42)
+            self.assertEqual(live["knobs"]["K2"]["pct"], 75)
+            self.assertEqual(live["knobs"]["K3"]["pct"], 33)
+            self.assertEqual(live["knobs"]["K4"], {})
+            self.assertEqual(live["knobs"]["K5"], {})
+            self.assertEqual(live["source"], "pycaw")
+        finally:
+            (
+                volume_read.get_master_volume,
+                volume_read.get_app_volume,
+                volume_read.get_focused_process_name,
+            ) = orig
+
+
+class ConfigSaveRetryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmpdir.name, "config.py")
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_replace_retries_then_succeeds(self):
+        class BoomReplace:
+            def __init__(self, fail_n):
+                self.fail_n = fail_n
+                self.calls = 0
+
+            def __call__(self, src, dst):
+                self.calls += 1
+                if self.calls <= self.fail_n:
+                    err = PermissionError(5, "Access is denied")
+                    err.winerror = 5
+                    raise err
+                os.replace(src, dst)
+
+        boom = BoomReplace(3)
+        config_store._atomic_write_text(
+            self.path,
+            'SERIAL_PORT = "COM9"\n',
+            directory=self.tmpdir.name,
+            replace_fn=boom,
+            replace_attempts=10,
+        )
+        self.assertGreaterEqual(boom.calls, 4)
+        self.assertIn("COM9", open(self.path, encoding="utf-8").read())
+        # tmp cleaned up
+        tmps = [f for f in os.listdir(self.tmpdir.name) if f.startswith(".config_") and f.endswith(".tmp")]
+        self.assertEqual(tmps, [])
+
+    def test_replace_exhaustion_falls_back_in_place(self):
+        class AlwaysBoom:
+            def __call__(self, src, dst):
+                err = PermissionError(5, "Access is denied")
+                err.winerror = 5
+                raise err
+
+        config_store._atomic_write_text(
+            self.path,
+            'SERIAL_PORT = "COM7"\n',
+            directory=self.tmpdir.name,
+            replace_fn=AlwaysBoom(),
+            replace_attempts=3,
+        )
+        self.assertIn("COM7", open(self.path, encoding="utf-8").read())
+        tmps = [f for f in os.listdir(self.tmpdir.name) if f.startswith(".config_") and f.endswith(".tmp")]
+        self.assertEqual(tmps, [])
+
+    def test_save_config_roundtrip_with_lock(self):
+        cfg = config_store.default_config()
+        cfg["ACTIVE_PROFILE"] = "Default"
+        cfg = config_store.add_profile(cfg, "Stream")
+        config_store.save_config(cfg, self.path)
+        loaded = config_store.load_config(self.path)
+        self.assertIn("Stream", loaded["PROFILES"])
+
+
+class NoIdleLiveFileWritesTests(unittest.TestCase):
+    """Tray must not churn a live_levels.json in the app folder."""
+
+    def test_legacy_live_path_not_under_app_dir_by_default(self):
+        path = config_store.live_levels_path()
+        self.assertNotIn(os.path.abspath("PyMixer"), os.path.abspath(path))
+        # Prefer temp
+        self.assertTrue(
+            ("Temp" in path)
+            or ("tmp" in path.lower())
+            or path.startswith(tempfile.gettempdir())
+            or "PyMixer" in path
+        )
+
 
 
 if __name__ == "__main__":

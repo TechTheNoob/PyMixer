@@ -9,13 +9,14 @@ Hardware volume mixer for an ESP32-S3 box + a Windows tray app.
 ## What's new in this fork
 
 - **Discord-dark settings window** with Rubik + Inter, thin vertical faders, round knobs, blurple Bloom glow, no borders (native Windows frame only — no fake title-bar)
-- **Live faders** — display-only meters that track each physical slider after reverse + curve; shows "—" when the tray app / device isn't publishing
+- **Live faders** — display-only meters that read the *current* Windows volume for each knob's mapped target via pycaw (master / app session / focused app); shows "—" when nothing matches. Curve/reverse are already baked into the result the tray applied.
 - **Per-knob response curve** — Linear / Gentle / Strong (`volume = x ** exponent`) so the low end gets more travel
 - **Jitter filter** (formerly unlabeled "sensitivity") — how far the physical slider must move before volume updates
 - **Profiles rail** (add / rename / delete / switch) — Gaming, Work, Music, or whatever you name them
 - Tray **Profiles** submenu + hardware button actions `next_profile` and `profile:<Name>`
 - **Custom tray popup** (left-click) — frameless Discord-dark panel with profiles, live mini-faders, Settings / Reconnect / Quit; native right-click menu kept as fallback
 - Polished multi-size tray **icon** (blurple gradient + mixer glyph)
+- **Dark searchable app picker** (knobs & buttons) — groups Special actions / Apps currently playing audio / Other running apps, with friendly names and a "Type an .exe…" escape hatch
 - URL field on buttons appears **only** when the action is **Open Webpage…**
 - Classic Tk settings UI is still there as a fallback if `pywebview` isn't installed
 - `config.py` stays backward compatible; first launch migrates your existing mappings into a **Default** profile (curves default to linear)
@@ -54,7 +55,7 @@ Each profile stores its own knob mappings, button actions, reverse flags, jitter
 - Switch from the **left rail** in Settings, the tray **Profiles** menu, or a hardware button set to **Next Profile**
 - Map a button to `profile:Gaming` (etc.) to jump straight to a named profile
 - Button / tray switches update the live tray config immediately (and persist to disk); Settings edits are picked up by the tray on its ~5 s reload
-- Edits you make are written into the active profile when you hit **Save** (or when you switch profiles)
+- Edits you make are written into the active profile when you hit **Save** (or when you switch profiles). Saves use a lock + retries so Windows antivirus / another PyMixer window holding `config.py` is less likely to fail with Access Denied.
 - Deleting the active profile falls back to another; the last profile can't be deleted
 
 ## Knobs: reverse, jitter filter, curve

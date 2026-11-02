@@ -23,12 +23,13 @@
     { value: "strong", label: "Strong" },
   ];
 
-  const LIVE_POLL_MS = 120;
+  const LIVE_POLL_MS = 150;
 
   const state = {
     config: null,
     ports: [],
     apps: [],
+    appCatalog: { audio: [], running: [], current: null },
     connected: false,
     demo: false,
     modalMode: null, // 'add' | 'rename'
@@ -108,6 +109,18 @@
     state.demo = true;
     state.ports = ["COM5", "COM3", "COM4"];
     state.apps = ["chrome.exe", "firefox.exe", "Discord.exe", "spotify.exe", "Code.exe"];
+    state.appCatalog = {
+      audio: [
+        { value: "Discord.exe", label: "Discord" },
+        { value: "spotify.exe", label: "spotify" },
+        { value: "chrome.exe", label: "chrome" },
+      ],
+      running: [
+        { value: "firefox.exe", label: "firefox" },
+        { value: "Code.exe", label: "Code" },
+      ],
+      current: null,
+    };
     state.connected = true;
     state.config = {
       SERIAL_PORT: "COM5",
@@ -174,6 +187,7 @@
       state.config = data.config;
       state.ports = data.ports || [];
       state.apps = data.apps || [];
+      state.appCatalog = data.app_catalog || { audio: [], running: [], current: null };
       state.connected = !!data.connected;
       if (data.live) state.live = data.live;
       state.demo = false;
@@ -344,7 +358,6 @@
     root.innerHTML = "";
     const cfg = state.config;
     const n = cfg.NUM_KNOBS || 5;
-    const apps = optionList(KNOB_SPECIAL, state.apps, null);
     for (let i = 1; i <= n; i++) {
       const key = "K" + i;
       const value = (cfg.APP_MAPPINGS || {})[key] || "";
@@ -371,13 +384,17 @@
         <div class="controls"></div>
       `;
       const controls = card.querySelector(".controls");
-      const sel = document.createElement("select");
-      sel.className = "dd";
-      sel.dataset.knob = key;
-      fillSelect(sel, apps, value);
-      sel.addEventListener("change", () => {
-        cfg.APP_MAPPINGS[key] = sel.value;
-        renderChannels();
+      const sel = window.PyMixerAppPicker.create({
+        special: KNOB_SPECIAL,
+        current: value,
+        dataAttr: "knob",
+        dataKey: key,
+        getCatalog: () => state.appCatalog,
+        looksLikeUrl: looksLikeUrl,
+        onChange: (v) => {
+          cfg.APP_MAPPINGS[key] = v;
+          renderChannels();
+        },
       });
 
       const optsCol = document.createElement("div");
@@ -423,7 +440,6 @@
     root.innerHTML = "";
     const cfg = state.config;
     const n = cfg.NUM_BUTTONS || 10;
-    const apps = optionList(BUTTON_SPECIAL, state.apps, null);
     for (let i = 1; i <= n; i++) {
       const key = "B" + i;
       const value = (cfg.APP_MAPPINGS || {})[key] || "";
@@ -433,21 +449,26 @@
       card.innerHTML = `
         <div class="btop"><span class="bid">${key}</span><span class="bdot ${value ? "on" : ""}"></span></div>
       `;
-      const sel = document.createElement("select");
-      sel.className = "bact-select";
-      sel.dataset.btn = key;
-      fillSelect(sel, apps, isUrl ? "__url__" : value);
       const url = document.createElement("input");
-      url.className = "burl-input" + (sel.value === "__url__" ? " show" : "");
+      url.className = "burl-input" + (isUrl ? " show" : "");
       url.dataset.url = key;
       url.placeholder = "URL…";
       url.value = isUrl ? value : "";
-      sel.addEventListener("change", () => {
-        const show = sel.value === "__url__";
-        url.classList.toggle("show", show);
-        if (!show) url.value = "";
-        card.classList.toggle("live", !!sel.value && sel.value !== "");
-        card.querySelector(".bdot").classList.toggle("on", !!sel.value);
+      const sel = window.PyMixerAppPicker.create({
+        special: BUTTON_SPECIAL,
+        current: isUrl ? "__url__" : value,
+        dataAttr: "btn",
+        dataKey: key,
+        compact: true,
+        getCatalog: () => state.appCatalog,
+        looksLikeUrl: looksLikeUrl,
+        onChange: (v) => {
+          const show = v === "__url__";
+          url.classList.toggle("show", show);
+          if (!show) url.value = "";
+          card.classList.toggle("live", !!v);
+          card.querySelector(".bdot").classList.toggle("on", !!v);
+        },
       });
       card.appendChild(sel);
       card.appendChild(url);
@@ -532,16 +553,30 @@
     }
     $("btn-save").disabled = true;
     try {
-      await call("save_config", cfg);
-      state.config = cfg;
+      const result = await call("save_config", cfg);
+      if (result && result.ok === false) {
+        toast(result.error || "Could not save settings. Try again.", true);
+        return;
+      }
+      state.config = result && result.APP_MAPPINGS ? result : cfg;
+      if (result && result.app_catalog) state.appCatalog = result.app_catalog;
       toast("Configuration saved");
-      const status = await call("get_state");
-      state.connected = !!status.connected;
-      state.ports = status.ports || state.ports;
-      if (status.live) state.live = status.live;
+      try {
+        const status = await call("get_state");
+        state.connected = !!status.connected;
+        state.ports = status.ports || state.ports;
+        if (status.app_catalog) state.appCatalog = status.app_catalog;
+        if (status.live) state.live = status.live;
+      } catch (_) {}
       renderConn();
     } catch (err) {
-      toast(String(err.message || err), true);
+      const msg = String(err.message || err);
+      // Never show raw filesystem paths in the toast
+      if (/WinError|Access is denied|config\.py|\\|\//i.test(msg)) {
+        toast("Could not save settings. Close other PyMixer windows and try again.", true);
+      } else {
+        toast(msg, true);
+      }
     } finally {
       $("btn-save").disabled = false;
     }
@@ -658,7 +693,13 @@
       return;
     }
     try {
-      const live = await call("get_live_levels");
+      const cfg = collectFromDom() || state.config;
+      let live;
+      try {
+        live = await call("get_live_levels_for", cfg);
+      } catch (_) {
+        live = await call("get_live_levels");
+      }
       state.live = live || { stale: true, knobs: {} };
       const n = (state.config && state.config.NUM_KNOBS) || 5;
       for (let i = 1; i <= n; i++) updateFaderDom("K" + i);
@@ -720,6 +761,8 @@
           addLabel: ((document.querySelector(".rail-foot .rail-label") || {}).textContent || ""),
           urlVisibleCount: document.querySelectorAll("input.burl-input.show").length,
           curves: Array.from(document.querySelectorAll("[data-curve]")).map((el) => el.value),
+          appPickers: document.querySelectorAll(".app-picker").length,
+          nativeAppSelects: document.querySelectorAll("select.dd, select.bact-select").length,
         })
       );
     } catch (e) {

@@ -11,3 +11,7 @@ pymixer_tray_reconnect.flag
 pymixer_tray_open_settings.flag
 PyMixer/pymixer_tray_*
 pymixer_tray_refresh.flag
+*.lock
+config.py.lock
+PyMixer/config.py.lock
+demo_state.json

@@ -27,9 +27,7 @@ running = True
 config = {}
 _APP_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
 config_file_path = os.path.join(_APP_DIR, 'config.py')
-live_levels_file_path = os.path.join(_APP_DIR, config_store.LIVE_LEVELS_FILENAME)
-_last_live_write = 0.0
-LIVE_WRITE_INTERVAL = 0.12  # seconds — throttle disk writes
+# Live faders: settings/popup read Windows volumes directly via pycaw (volume_read).
 _tray_icon = None
 _menu_fingerprint = None
 
@@ -182,7 +180,7 @@ def serial_reader_thread():
     """
     Function to run in a separate thread, continuously reading serial data.
     """
-    global ser, running, config, _last_live_write, _menu_fingerprint
+    global ser, running, config, _menu_fingerprint
     last_button_state = {}
     last_knob_value = {}
     last_config_load_time = time.time()
@@ -191,21 +189,30 @@ def serial_reader_thread():
 
     try:
         while running:
-            # Reload config every 5 seconds even if the port is down, so Settings
-            # profile add/rename/delete still refreshes the native tray menu.
+            # Reload config at most every 5s, and only if mtime/size changed,
+            # so we are not opening config.py on a timer for no reason.
             if time.time() - last_config_load_time > 5:
-                before = tray_menu.menu_fingerprint(config) if config else None
-                load_config()
-                after = tray_menu.menu_fingerprint(config)
                 last_config_load_time = time.time()
-                if before is None or tray_menu.profiles_changed(before, after):
-                    _menu_fingerprint = after
-                    try:
-                        refresh_tray_menu()
-                    except Exception:
-                        pass
+                try:
+                    st = os.stat(config_file_path)
+                    sig = (st.st_mtime_ns, st.st_size)
+                except OSError:
+                    sig = None
+                if sig is not None and sig == getattr(serial_reader_thread, '_cfg_sig', None):
+                    pass  # unchanged on disk
                 else:
-                    _menu_fingerprint = after
+                    before = tray_menu.menu_fingerprint(config) if config else None
+                    load_config()
+                    serial_reader_thread._cfg_sig = sig
+                    after = tray_menu.menu_fingerprint(config)
+                    if before is None or tray_menu.profiles_changed(before, after):
+                        _menu_fingerprint = after
+                        try:
+                            refresh_tray_menu()
+                        except Exception:
+                            pass
+                    else:
+                        _menu_fingerprint = after
 
             if not ser or not ser.is_open:
                 time.sleep(1)
@@ -286,15 +293,6 @@ def serial_reader_thread():
 
                 last_knob_value[key] = knob_value
 
-            # Publish live fader positions for the settings UI (throttled).
-            now = time.time()
-            if now - _last_live_write >= LIVE_WRITE_INTERVAL:
-                config_store.write_live_levels(
-                    live_knobs,
-                    live_levels_file_path,
-                    connected=True,
-                )
-                _last_live_write = now
             
             for i, button_value in enumerate(button_values):
                 key = f'B{i + 1}'
@@ -576,6 +574,7 @@ def setup_and_run_icon():
     global ser, _tray_icon
     load_config()
     print("Configuration loaded from config.py.")
+
 
     try:
         ser = serial.Serial(config['SERIAL_PORT'], config['BAUD_RATE'], timeout=1)

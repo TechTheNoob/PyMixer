@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import errno
 import sys
 import tempfile
 import time
@@ -54,7 +55,8 @@ CURVE_EXPONENTS = {
 DEFAULT_CURVE = "linear"
 VALID_CURVES = tuple(CURVE_EXPONENTS.keys())
 
-# Live levels file written by the tray app, read by the settings UI.
+# Legacy live-levels helpers (tests only). Live faders now read Windows volumes
+# via pycaw in the settings/popup process (volume_read). Paths resolve under TEMP.
 LIVE_LEVELS_FILENAME = "live_levels.json"
 LIVE_LEVELS_STALE_SECONDS = 2.0
 
@@ -75,9 +77,20 @@ def apply_curve(normalized: float, curve: str = DEFAULT_CURVE) -> float:
 
 
 def live_levels_path(base_dir: Optional[str] = None) -> str:
-    if base_dir is None:
-        base_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-    return os.path.join(base_dir, LIVE_LEVELS_FILENAME)
+    """
+    Path for a legacy live_levels.json.
+    Prefer %TEMP%/PyMixer (or /tmp/PyMixer). Explicit base_dir still honored
+    (used by unit tests with a temp folder).
+    """
+    if base_dir is not None:
+        return os.path.join(base_dir, LIVE_LEVELS_FILENAME)
+    tmp = os.environ.get("TEMP") or os.environ.get("TMP") or tempfile.gettempdir()
+    folder = os.path.join(tmp, "PyMixer")
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        folder = tmp
+    return os.path.join(folder, LIVE_LEVELS_FILENAME)
 
 
 def write_live_levels(
@@ -288,6 +301,13 @@ def config_path(base_dir: Optional[str] = None) -> str:
     return os.path.join(base_dir, "config.py")
 
 
+def _read_config_text(path: str) -> str:
+    """Read config.py bytes and close the handle immediately before parsing."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    return raw.decode("utf-8")
+
+
 def load_config(path: Optional[str] = None) -> Dict[str, Any]:
     cfg = default_config()
     path = path or config_path()
@@ -295,8 +315,8 @@ def load_config(path: Optional[str] = None) -> Dict[str, Any]:
     if os.path.exists(path):
         try:
             local_vars: Dict[str, Any] = {}
-            with open(path, "r", encoding="utf-8") as f:
-                exec(f.read(), {}, local_vars)
+            source = _read_config_text(path)  # handle closed before exec
+            exec(source, {}, local_vars)
             file_had_profiles = "PROFILES" in local_vars and isinstance(
                 local_vars.get("PROFILES"), dict
             ) and bool(local_vars.get("PROFILES"))
@@ -314,7 +334,13 @@ def _repr_write(value: Any) -> str:
 
 
 def save_config(cfg: Dict[str, Any], path: Optional[str] = None) -> None:
-    """Atomically write config.py. Always mirrors active profile to top-level."""
+    """
+    Atomically write config.py with cross-process locking and WinError 5/32 retries.
+
+    On Windows, antivirus / indexer / another PyMixer process can briefly lock the
+    destination so os.replace fails with Access Denied. We retry with backoff, then
+    fall back to in-place truncate+write, and always clean up the .tmp file.
+    """
     path = path or config_path()
     cfg = migrate_profiles(cfg, apply=False)
     sync_active_into_profiles(cfg)
@@ -334,19 +360,209 @@ def save_config(cfg: Dict[str, Any], path: Optional[str] = None) -> None:
         f"PROFILE_ICONS = {_repr_write(cfg.get('PROFILE_ICONS', {}))}",
         "",
     ]
-    text = "\n".join(lines)
+    body = "\n".join(lines)
     directory = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".config_", suffix=".tmp", dir=directory)
+    os.makedirs(directory, exist_ok=True)
+
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(text)
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        with _ConfigWriteLock(path):
+            _atomic_write_text(path, body, directory=directory)
+    except ConfigSaveError:
         raise
+    except OSError as exc:
+        raise ConfigSaveError(
+            "Could not save settings. Close other PyMixer windows and try again."
+        ) from exc
+
+
+def _is_sharing_violation(exc: BaseException) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        win = getattr(exc, "winerror", None)
+        if win in (5, 32):  # ACCESS_DENIED, SHARING_VIOLATION
+            return True
+        if getattr(exc, "errno", None) in (errno.EACCES, errno.EPERM, errno.EBUSY):
+            return True
+    return False
+
+
+def _atomic_write_text(
+    path: str,
+    body: str,
+    *,
+    directory: Optional[str] = None,
+    replace_attempts: int = 10,
+    replace_fn=None,
+) -> None:
+    """
+    Write body via temp + os.replace with retries; fall back to in-place write.
+
+    replace_fn is injectable for tests (defaults to os.replace).
+    """
+    directory = directory or (os.path.dirname(path) or ".")
+    replace = replace_fn or os.replace
+    fd, tmp = tempfile.mkstemp(prefix=".config_", suffix=".tmp", dir=directory)
+    wrote_tmp = False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
+            f.write(body)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        wrote_tmp = True
+
+        last_err: Optional[BaseException] = None
+        for attempt in range(replace_attempts):
+            try:
+                replace(tmp, path)
+                return
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                if not _is_sharing_violation(exc):
+                    break
+                # ~2s total: 0.05, 0.1, 0.15 ... capped
+                time.sleep(min(0.05 * (attempt + 1), 0.35))
+
+        # Fallback: write in place (truncate + write + flush + fsync)
+        try:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(body)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            return
+        except Exception as exc:  # noqa: BLE001
+            if last_err is not None:
+                raise exc from last_err
+            raise
+    finally:
+        if wrote_tmp and os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+class ConfigSaveError(OSError):
+    """Raised when config.py cannot be saved after retries + fallback."""
+
+    def __init__(self, message: str = "Could not save settings. Close other PyMixer windows and try again."):
+        super().__init__(message)
+        self.user_message = message
+
+
+class _ConfigWriteLock:
+    """
+    Cross-process lock around config.py writes.
+    Windows: msvcrt.locking on a sibling .lock file.
+    Else: fcntl.flock. Falls back to O_EXCL lockfile with stale timeout.
+    """
+
+    STALE_SECONDS = 15.0
+
+    def __init__(self, config_path: str):
+        self.lock_path = config_path + ".lock"
+        self._fh = None
+        self._mode = None  # 'msvcrt' | 'fcntl' | 'excl'
+
+    def __enter__(self):
+        deadline = time.time() + 5.0
+        last_err = None
+        while time.time() < deadline:
+            try:
+                self._acquire_once()
+                return self
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+                time.sleep(0.05)
+        raise ConfigSaveError(
+            "Could not save settings (busy). Close other PyMixer windows and try again."
+        ) from last_err
+
+    def _acquire_once(self) -> None:
+        # Prefer platform locks
+        try:
+            if sys.platform == "win32":
+                import msvcrt  # type: ignore
+
+                self._fh = open(self.lock_path, "a+b")
+                self._fh.seek(0)
+                # lock 1 byte
+                msvcrt.locking(self._fh.fileno(), msvcrt.LK_NBLCK, 1)
+                self._mode = "msvcrt"
+                return
+            else:
+                import fcntl  # type: ignore
+
+                self._fh = open(self.lock_path, "a+b")
+                fcntl.flock(self._fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._mode = "fcntl"
+                return
+        except Exception:
+            # Fall through to O_EXCL
+            if self._fh is not None:
+                try:
+                    self._fh.close()
+                except Exception:
+                    pass
+                self._fh = None
+
+        # O_EXCL lockfile with stale timeout
+        try:
+            fd = os.open(self.lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(str(os.getpid()))
+            self._mode = "excl"
+            self._fh = None
+            return
+        except FileExistsError:
+            try:
+                age = time.time() - os.path.getmtime(self.lock_path)
+            except OSError:
+                age = 0
+            if age > self.STALE_SECONDS:
+                try:
+                    os.unlink(self.lock_path)
+                except OSError:
+                    pass
+            raise
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if self._mode == "msvcrt" and self._fh is not None:
+                import msvcrt  # type: ignore
+
+                try:
+                    self._fh.seek(0)
+                    msvcrt.locking(self._fh.fileno(), msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+            elif self._mode == "fcntl" and self._fh is not None:
+                import fcntl  # type: ignore
+
+                try:
+                    fcntl.flock(self._fh.fileno(), fcntl.LOCK_UN)
+                except Exception:
+                    pass
+            elif self._mode == "excl":
+                try:
+                    os.unlink(self.lock_path)
+                except OSError:
+                    pass
+        finally:
+            if self._fh is not None:
+                try:
+                    self._fh.close()
+                except Exception:
+                    pass
+            self._fh = None
+        return False
+
 
 
 def list_profile_names(cfg: Dict[str, Any]) -> List[str]:

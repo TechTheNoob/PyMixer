@@ -21,6 +21,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 import config_store
+import volume_read
 
 POPUP_WIDTH = 280
 POPUP_HEIGHT = 420
@@ -257,7 +258,7 @@ def safe_show() -> None:
 class PopupApi:
     def __init__(self, config_file: Optional[str] = None):
         self.config_file = config_file or config_store.config_path(HERE)
-        self.live_file = config_store.live_levels_path(HERE)
+        self.live_file = None
 
     def bind_window(self, window) -> None:
         global _window
@@ -273,7 +274,7 @@ class PopupApi:
             ports_ok = str(cfg.get("SERIAL_PORT", "")) in ports
         except Exception:
             ports_ok = False
-        live = config_store.read_live_levels(self.live_file)
+        live = volume_read.live_levels_from_config(cfg)
         connected = (not live.get("stale")) or ports_ok
         return {
             "active": cfg.get("ACTIVE_PROFILE", "Default"),
@@ -284,7 +285,8 @@ class PopupApi:
         }
 
     def get_live(self) -> Dict[str, Any]:
-        return config_store.read_live_levels(self.live_file)
+        cfg = config_store.load_config(self.config_file)
+        return volume_read.live_levels_from_config(cfg)
 
     def switch_profile(self, name: str) -> Dict[str, Any]:
         cfg = config_store.load_config(self.config_file)

@@ -12,9 +12,11 @@
     --text: #F2F3F5;
     --muted: #B5BAC1;
   }
+  html { color-scheme: dark; }
   body {
     width: 1100px; height: 640px; overflow: hidden;
     font-family: var(--inter); color: var(--text); background: var(--deep);
+    color-scheme: dark;
   }
   .scene {
     width: 1100px; height: 640px; position: relative; overflow: hidden;
@@ -346,3 +348,84 @@
   input.burl-input { display: none; }
   input.burl-input.show { display: block; }
 
+
+  /* Native <select> fallback (port / curve) — force dark options */
+  select, select.chip-select, select.curve-select {
+    color-scheme: dark;
+    background: var(--deep);
+    color: var(--text);
+  }
+  select option, select.chip-select option, select.curve-select option {
+    background: #1e1f22;
+    color: #f2f3f5;
+  }
+
+  /* Custom Discord-dark app picker */
+  .app-picker { position: relative; width: 100%; z-index: 1; }
+  .app-picker.open { z-index: 50; }
+  .app-picker .ap-btn {
+    width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px;
+    background: var(--deep); color: var(--text); border: none; outline: none;
+    font-family: var(--inter); font-size: 10px; font-weight: 500;
+    padding: 5px 6px; border-radius: 6px; cursor: pointer; text-align: left;
+  }
+  .app-picker.compact .ap-btn {
+    background: transparent; font-family: var(--rubik); font-size: 12px; font-weight: 600;
+    padding: 0;
+  }
+  .app-picker .ap-label {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+  }
+  .app-picker .ap-caret { color: var(--muted); font-size: 9px; flex-shrink: 0; }
+  .app-picker .ap-panel {
+    display: none; position: absolute; left: 0; right: 0; top: calc(100% + 4px);
+    background: #1e1f22; border: 1px solid #3f4147; border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0,0,0,0.55); overflow: hidden; min-width: 220px;
+  }
+  .app-picker.open .ap-panel { display: flex; flex-direction: column; max-height: 280px; }
+  .ap-search-wrap { padding: 8px; border-bottom: 1px solid #2b2d31; }
+  .ap-search {
+    width: 100%; background: #2b2d31; color: var(--text); border: none; outline: none;
+    border-radius: 6px; padding: 7px 9px; font-family: var(--inter); font-size: 12px;
+  }
+  .ap-list {
+    overflow: auto; flex: 1; padding: 4px 0;
+    scrollbar-width: thin; scrollbar-color: #4e5058 #1e1f22;
+  }
+  .ap-list::-webkit-scrollbar { width: 8px; }
+  .ap-list::-webkit-scrollbar-track { background: #1e1f22; }
+  .ap-list::-webkit-scrollbar-thumb { background: #4e5058; border-radius: 8px; }
+  .ap-group {
+    padding: 8px 10px 4px; font-family: var(--rubik); font-size: 10px; font-weight: 700;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .ap-option {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+    width: 100%; border: none; background: transparent; color: var(--text);
+    text-align: left; padding: 6px 12px; cursor: pointer; font-family: var(--inter); font-size: 12px;
+  }
+  .ap-option:hover, .ap-option.active { background: #35373c; }
+  .ap-option.selected { background: rgba(88,101,242,0.22); color: #fff; }
+  .ap-opt-sub { font-size: 10px; color: var(--muted); }
+  .ap-expand {
+    width: calc(100% - 16px); margin: 4px 8px 8px; border: none; border-radius: 6px;
+    background: #2b2d31; color: var(--blurple); font-family: var(--inter); font-size: 11px;
+    font-weight: 600; padding: 7px 8px; cursor: pointer;
+  }
+  .ap-expand:hover { background: #35373c; }
+  .ap-manual { border-top: 1px solid #2b2d31; padding: 6px 8px 8px; }
+  .ap-manual-toggle {
+    border: none; background: transparent; color: var(--muted); cursor: pointer;
+    font-family: var(--inter); font-size: 11px; padding: 4px 2px;
+  }
+  .ap-manual-toggle:hover { color: var(--text); }
+  .ap-manual-row { display: none; gap: 6px; margin-top: 6px; }
+  .ap-manual-row.show { display: flex; }
+  .ap-manual-input {
+    flex: 1; background: #2b2d31; color: var(--text); border: none; outline: none;
+    border-radius: 6px; padding: 6px 8px; font-family: var(--inter); font-size: 11px;
+  }
+  .ap-manual-ok {
+    border: none; border-radius: 6px; background: var(--blurple); color: #fff;
+    font-family: var(--rubik); font-size: 11px; font-weight: 600; padding: 6px 10px; cursor: pointer;
+  }
