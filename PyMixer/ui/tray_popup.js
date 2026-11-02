@@ -86,12 +86,16 @@
     $("active-profile").textContent = data.active || "Default";
     const pill = $("status-pill");
     const text = $("status-text");
-    if (data.connected) {
+    if (data.demo || state.demo) {
+      pill.classList.remove("off");
+      text.textContent = "Demo";
+      state.demo = true;
+    } else if (data.connected) {
       pill.classList.remove("off");
       text.textContent = "Live";
     } else {
       pill.classList.add("off");
-      text.textContent = state.demo ? "Demo" : "Offline";
+      text.textContent = "Offline";
     }
     renderLevels();
     renderProfiles();

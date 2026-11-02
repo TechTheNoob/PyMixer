@@ -190,7 +190,7 @@
       state.appCatalog = data.app_catalog || { audio: [], running: [], current: null };
       state.connected = !!data.connected;
       if (data.live) state.live = data.live;
-      state.demo = false;
+      state.demo = !!data.demo;
     } catch (err) {
       console.warn("get_state failed, using demo data:", err);
       demoBootstrap();
@@ -530,12 +530,15 @@
     const cfg = state.config;
     const pill = $("status-pill");
     const text = $("status-text");
-    if (state.connected) {
+    if (state.demo) {
+      pill.classList.remove("off");
+      text.textContent = "Demo";
+    } else if (state.connected) {
       pill.classList.remove("off");
       text.textContent = "Connected";
     } else {
       pill.classList.add("off");
-      text.textContent = state.demo ? "Demo" : "Disconnected";
+      text.textContent = "Disconnected";
     }
     const portSel = $("port-select");
     const ports = state.ports.length ? state.ports : [cfg.SERIAL_PORT || "COM3"];
