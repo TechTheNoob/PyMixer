@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PyMixer</title>
+  <link rel="stylesheet" href="fonts.css" />
+  <link rel="stylesheet" href="tray_popup.css" />
+</head>
+<body>
+  <div class="popup" id="popup">
+    <div class="blob"></div>
+    <header class="head">
+      <div class="mark">P</div>
+      <div class="titles">
+        <div class="name">PyMixer</div>
+        <div class="profile" id="active-profile">Default</div>
+      </div>
+      <div class="pill" id="status-pill"><span class="dot"></span><span id="status-text">…</span></div>
+    </header>
+
+    <section class="levels" id="levels" aria-label="Live levels"></section>
+
+    <section class="profiles">
+      <div class="sec">Profiles</div>
+      <div class="plist" id="profiles"></div>
+    </section>
+
+    <nav class="actions">
+      <button type="button" class="act" id="btn-settings"><span class="g">⚙</span> Settings</button>
+      <button type="button" class="act" id="btn-reconnect"><span class="g">↻</span> Reconnect</button>
+      <button type="button" class="act danger" id="btn-quit"><span class="g">✕</span> Quit</button>
+    </nav>
+  </div>
+  <script src="tray_popup.js"></script>
+</body>
+</html>

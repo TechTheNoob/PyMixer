@@ -18,6 +18,7 @@ import pygetwindow as gw
 import psutil
 import win32process
 import config_store
+import tray_popup
 
 # --- GLOBAL VARIABLES ---
 ser = None
@@ -28,6 +29,7 @@ config_file_path = os.path.join(_APP_DIR, 'config.py')
 live_levels_file_path = os.path.join(_APP_DIR, config_store.LIVE_LEVELS_FILENAME)
 _last_live_write = 0.0
 LIVE_WRITE_INTERVAL = 0.12  # seconds — throttle disk writes
+_tray_icon = None
 
 # --- CONFIGURATION FILE HANDLING ---
 
@@ -160,6 +162,15 @@ def apply_profile_switch(name=None, cycle=False):
     save_config_dict(cfg)
     config = cfg
     print(f"Active profile: {cfg.get('ACTIVE_PROFILE')}")
+    try:
+        refresh_tray_menu()
+    except Exception:
+        pass
+    if _tray_icon is not None:
+        try:
+            _tray_icon.title = f"PyMixer · {cfg.get('ACTIVE_PROFILE', 'Default')}"
+        except Exception:
+            pass
     return cfg.get('ACTIVE_PROFILE')
 
 
@@ -315,7 +326,10 @@ def serial_reader_thread():
 
 # --- SYSTEM TRAY ICON FUNCTIONS ---
 
-def open_config_gui(icon, item):
+_tray_icon = None  # set in setup_and_run_icon for menu refresh / quit
+
+
+def open_config_gui(icon=None, item=None):
     """
     Open the configuration GUI in a new process.
     Prefers the Discord-dark pywebview UI; falls back to the classic Tk GUI
@@ -355,54 +369,208 @@ def open_config_gui(icon, item):
         print(f"Failed to open configuration GUI. An unexpected error occurred: {e}")
 
 
+def open_tray_popup(icon=None, item=None):
+    """Left-click default: open the custom Discord-dark tray popup (non-blocking)."""
+    try:
+        import webview  # noqa: F401
+    except ImportError:
+        # No pywebview — fall back to settings / native menu only
+        print("pywebview missing; tray popup unavailable. Opening Settings instead.")
+        open_config_gui(icon, item)
+        return
+    threading.Thread(target=tray_popup.launch_popup_process, daemon=True).start()
+
+
 def _make_profile_switcher(profile_name):
     def _switch(icon, item):
         try:
             apply_profile_switch(name=profile_name)
+            refresh_tray_menu()
         except Exception as e:
             print(f"Could not switch profile: {e}")
     return _switch
 
 
+def _profile_is_active(name):
+    def _checked(item):
+        return config.get('ACTIVE_PROFILE') == name
+    return _checked
+
+
+def reload_config_from_disk(icon=None, item=None):
+    """Reload config.py into memory and refresh the tray menu."""
+    try:
+        load_config()
+        refresh_tray_menu()
+        print(f"Config reloaded. Active profile: {config.get('ACTIVE_PROFILE')}")
+    except Exception as e:
+        print(f"Reload failed: {e}")
+
+
+def reconnect_serial(icon=None, item=None):
+    """Close and reopen the serial port using the current config."""
+    global ser
+    try:
+        load_config()
+        if ser and getattr(ser, 'is_open', False):
+            try:
+                ser.close()
+            except Exception:
+                pass
+        ser = serial.Serial(config['SERIAL_PORT'], config['BAUD_RATE'], timeout=1)
+        print(f"Reconnected to {config['SERIAL_PORT']}")
+        refresh_tray_menu()
+    except Exception as e:
+        print(f"Reconnect failed: {e}")
+        ser = None
+        refresh_tray_menu()
+
+
 def build_tray_menu():
-    """Build the tray menu, including a Profiles submenu."""
+    """
+    Native Win32 fallback menu (right-click).
+    Left-click uses the custom popup via the default item.
+    """
     load_config()
+    active = config.get('ACTIVE_PROFILE', 'Default')
+    header = f"PyMixer · {active}"
+
     profile_items = []
     for name in config_store.list_profile_names(config):
-        # pystray checks radio items against a callable; keep it simple with plain items
-        profile_items.append(MenuItem(name, _make_profile_switcher(name)))
+        profile_items.append(
+            MenuItem(
+                name,
+                _make_profile_switcher(name),
+                checked=_profile_is_active(name),
+                radio=True,
+            )
+        )
     if not profile_items:
-        profile_items.append(MenuItem('Default', _make_profile_switcher('Default')))
+        profile_items.append(
+            MenuItem('Default', _make_profile_switcher('Default'), checked=True, radio=True)
+        )
     profiles_menu = Menu(*profile_items)
+
+    port = config.get('SERIAL_PORT', '?')
+    connected = bool(ser and getattr(ser, 'is_open', False))
+    status_label = f"{'●' if connected else '○'}  {port}"
+
     return Menu(
-        MenuItem('PyMixer is Running', None, enabled=False),
-        MenuItem(f"Profile: {config.get('ACTIVE_PROFILE', 'Default')}", None, enabled=False),
-        MenuItem('Profiles', profiles_menu),
-        MenuItem('Settings', open_config_gui),
-        MenuItem('Exit', exit_program),
+        # default=True → left-click opens the custom popup
+        MenuItem('Open PyMixer', open_tray_popup, default=True, visible=False),
+        MenuItem(header, None, enabled=False),
+        MenuItem(status_label, None, enabled=False),
+        Menu.SEPARATOR,
+        MenuItem('⚙  Settings', open_config_gui),
+        MenuItem('☰  Profiles', profiles_menu),
+        Menu.SEPARATOR,
+        MenuItem('↻  Reload config', reload_config_from_disk),
+        MenuItem('↻  Reconnect', reconnect_serial),
+        Menu.SEPARATOR,
+        MenuItem('✕  Quit', exit_program),
     )
 
-def exit_program(icon, item):
-    """
-    Function to stop the program and close the icon.
-    """
+
+def refresh_tray_menu():
+    global _tray_icon
+    if _tray_icon is not None:
+        try:
+            _tray_icon.menu = build_tray_menu()
+            _tray_icon.update_menu()
+        except Exception as e:
+            print(f"Could not refresh tray menu: {e}")
+
+
+def exit_program(icon=None, item=None):
+    """Stop the program and close the icon."""
     global running
     print("Exiting PyMixer...")
     running = False
-    icon.stop()
+    try:
+        tray_popup._clear_lock()
+    except Exception:
+        pass
+    if icon is not None:
+        icon.stop()
+    elif _tray_icon is not None:
+        _tray_icon.stop()
+
+
+def _flag_watcher():
+    """Watch for quit / reconnect / open-settings flags written by the popup."""
+    global running
+    seen = {
+        'quit': 0.0,
+        'reconnect': 0.0,
+        'settings': 0.0,
+    }
+    while running:
+        time.sleep(0.35)
+        try:
+            q = tray_popup.quit_flag_path()
+            if os.path.exists(q):
+                m = os.path.getmtime(q)
+                if m > seen['quit']:
+                    seen['quit'] = m
+                    try:
+                        os.unlink(q)
+                    except OSError:
+                        pass
+                    exit_program(_tray_icon, None)
+                    return
+            r = tray_popup.reconnect_flag_path()
+            if os.path.exists(r):
+                m = os.path.getmtime(r)
+                if m > seen['reconnect']:
+                    seen['reconnect'] = m
+                    try:
+                        os.unlink(r)
+                    except OSError:
+                        pass
+                    reconnect_serial()
+            s = tray_popup.open_settings_flag_path()
+            if os.path.exists(s):
+                m = os.path.getmtime(s)
+                if m > seen['settings']:
+                    seen['settings'] = m
+                    try:
+                        os.unlink(s)
+                    except OSError:
+                        pass
+                    # settings already launched by popup; just refresh menu
+                    refresh_tray_menu()
+        except Exception:
+            pass
+
+
+def load_tray_icon_image():
+    """Load the bundled multi-size Discord-dark icon."""
+    base = os.path.dirname(os.path.abspath(sys.argv[0]))
+    for name in ('icon.ico', 'icon.png', 'icon.ico'):
+        candidate = os.path.join(base, name)
+        if os.path.exists(candidate):
+            try:
+                return Image.open(candidate)
+            except Exception:
+                continue
+    # Last resort: generate a tiny solid icon
+    img = Image.new('RGBA', (64, 64), (88, 101, 242, 255))
+    return img
+
 
 def setup_and_run_icon():
     """
     Sets up the system tray icon and runs it in detached mode.
+    Left-click → custom popup; right-click → native menu fallback.
     """
-    global ser
+    global ser, _tray_icon
     load_config()
     print("Configuration loaded from config.py.")
 
     try:
         ser = serial.Serial(config['SERIAL_PORT'], config['BAUD_RATE'], timeout=1)
         print(f"Connected to ESP32 on port {config['SERIAL_PORT']}")
-        
+
         thread = threading.Thread(target=serial_reader_thread)
         thread.daemon = True
         thread.start()
@@ -412,22 +580,25 @@ def setup_and_run_icon():
         ports = serial.tools.list_ports.comports()
         for port, desc, hwid in sorted(ports):
             print(f"  {port}: {desc} [{hwid}]")
-        raise
+        # Keep running so the user can open Settings / Reconnect from the tray
+        ser = None
 
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "icon.ico")
-    if not os.path.exists(icon_path):
-        icon_path = "icon.ico"
-    icon_image = Image.open(icon_path)
+    icon_image = load_tray_icon_image()
     menu = build_tray_menu()
 
     icon = Icon(
         name="PyMixer",
         icon=icon_image,
-        title="PyMixer - ESP32 Audio Mixer",
+        title=f"PyMixer · {config.get('ACTIVE_PROFILE', 'Default')}",
         menu=menu
     )
-    
+    _tray_icon = icon
+
+    threading.Thread(target=_flag_watcher, daemon=True).start()
+
+    # Patch apply_profile_switch callers to refresh menu: wrap after definition
     icon.run_detached()
+
 
 if __name__ == "__main__":
     try:

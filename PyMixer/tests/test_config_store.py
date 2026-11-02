@@ -450,5 +450,65 @@ class ApiBridgeTests(unittest.TestCase):
         self.assertEqual(live["knobs"]["K1"]["pct"], 1)
 
 
+class TrayPopupTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmpdir.name, "config.py")
+        self.live = os.path.join(self.tmpdir.name, "live_levels.json")
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_popup_position_bottom_right(self):
+        import tray_popup
+
+        x, y = tray_popup.popup_position(
+            width=280, height=420, margin=12, work_area=(0, 0, 1920, 1040)
+        )
+        self.assertEqual(x, 1920 - 280 - 12)
+        self.assertEqual(y, 1040 - 420 - 12)
+
+    def test_popup_position_clamps_to_work_area(self):
+        import tray_popup
+
+        x, y = tray_popup.popup_position(
+            width=500, height=500, margin=8, work_area=(100, 50, 400, 300)
+        )
+        self.assertEqual(x, 100 + 8)
+        self.assertEqual(y, 50 + 8)
+
+    def test_popup_api_state_and_switch(self):
+        import tray_popup
+
+        cfg = config_store.default_config()
+        cfg["APP_MAPPINGS"]["K1"] = "Discord.exe"
+        config_store.save_config(cfg, self.path)
+        cfg = config_store.load_config(self.path)
+        cfg = config_store.add_profile(cfg, "Gaming", clone_active=True)
+        cfg["APP_MAPPINGS"]["K1"] = "firefox.exe"
+        config_store.sync_active_into_profiles(cfg)
+        config_store.save_config(cfg, self.path)
+
+        api = tray_popup.PopupApi(config_file=self.path)
+        api.live_file = self.live
+        state = api.get_popup_state()
+        self.assertEqual(state["active"], "Gaming")
+        self.assertIn("Default", state["profiles"])
+        self.assertIn("Gaming", state["profiles"])
+
+        state = api.switch_profile("Default")
+        self.assertEqual(state["active"], "Default")
+        loaded = config_store.load_config(self.path)
+        self.assertEqual(loaded["ACTIVE_PROFILE"], "Default")
+        self.assertEqual(loaded["APP_MAPPINGS"]["K1"], "Discord.exe")
+
+        config_store.write_live_levels(
+            {"K1": {"raw": 100, "volume": 0.1, "pct": 10}}, self.live
+        )
+        live = api.get_live()
+        self.assertFalse(live["stale"])
+        self.assertEqual(live["knobs"]["K1"]["pct"], 10)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,6 +14,8 @@ Hardware volume mixer for an ESP32-S3 box + a Windows tray app.
 - **Jitter filter** (formerly unlabeled "sensitivity") — how far the physical slider must move before volume updates
 - **Profiles rail** (add / rename / delete / switch) — Gaming, Work, Music, or whatever you name them
 - Tray **Profiles** submenu + hardware button actions `next_profile` and `profile:<Name>`
+- **Custom tray popup** (left-click) — frameless Discord-dark panel with profiles, live mini-faders, Settings / Reconnect / Quit; native right-click menu kept as fallback
+- Polished multi-size tray **icon** (blurple gradient + mixer glyph)
 - URL field on buttons appears **only** when the action is **Open Webpage…**
 - Classic Tk settings UI is still there as a fallback if `pywebview` isn't installed
 - `config.py` stays backward compatible; first launch migrates your existing mappings into a **Default** profile (curves default to linear)
@@ -31,6 +33,18 @@ Or double-click `PyMixer.pyw` after the deps are installed.
 ### Dependencies
 
 See `requirements.txt`: `pyserial`, `pycaw`, `comtypes`, `pystray`, `Pillow`, `pygetwindow`, `psutil`, `pywin32`, `pywebview`.
+
+
+## Tray popup & menu
+
+![Tray icon](docs/tray-icon.png)
+
+![Tray popup](docs/tray-popup.png)
+
+- **Left-click** the tray icon → custom frameless popup (pywebview), anchored bottom-right above the taskbar via `SPI_GETWORKAREA`
+- **Right-click** → native Windows menu (Settings, Profiles with radio check, Reload, Reconnect, Quit) — also the fallback if pywebview is missing
+- Popup closes on blur, Esc, or after an action; it runs in a **separate process** so the serial reader is never blocked
+- Native Win32 menus cannot use custom fonts/colors; the popup is where the Discord-dark look lives
 
 ## How profiles work
 

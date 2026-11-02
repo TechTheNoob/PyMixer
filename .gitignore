@@ -1,6 +1,12 @@
-*.pyc
-*.tmp
-.pytest_cache/
-PyMixer/live_levels.json
 __pycache__/
+*.pyc
+.pytest_cache/
+*.tmp
 live_levels.json
+PyMixer/live_levels.json
+pymixer_tray_popup.lock
+pymixer_tray_popup.show
+pymixer_tray_quit.flag
+pymixer_tray_reconnect.flag
+pymixer_tray_open_settings.flag
+PyMixer/pymixer_tray_*
