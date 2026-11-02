@@ -45,11 +45,10 @@ html, body {
 }
 .mark {
   width: 34px; height: 34px; border-radius: 10px;
-  background: var(--blurple); color: #fff;
-  display: grid; place-items: center;
-  font-family: var(--rubik); font-weight: 700; font-size: 14px;
+  display: block; object-fit: cover;
   box-shadow: 0 4px 12px rgba(88,101,242,0.4);
   flex-shrink: 0;
+  background: transparent;
 }
 .titles { flex: 1; min-width: 0; }
 .name { font-family: var(--rubik); font-size: 14px; font-weight: 700; }

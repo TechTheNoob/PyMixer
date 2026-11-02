@@ -18,7 +18,7 @@
     return {
       active: "Gaming",
       profiles: ["Default", "Gaming", "Work", "Music"],
-      icons: { Default: "P", Gaming: "G", Work: "W", Music: "M" },
+      icons: { Default: "D", Gaming: "G", Work: "W", Music: "M" },
       connected: true,
       live: {
         stale: false,

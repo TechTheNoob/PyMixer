@@ -168,7 +168,7 @@ def default_config() -> Dict[str, Any]:
         "SLIDER_CURVE": deepcopy(curve),
         "PROFILES": {"Default": deepcopy(profile)},
         "ACTIVE_PROFILE": "Default",
-        "PROFILE_ICONS": {"Default": "P"},
+        "PROFILE_ICONS": {"Default": "D"},
     }
 
 

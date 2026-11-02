@@ -229,13 +229,19 @@
     const names = Object.keys(cfg.PROFILES || {});
     const icons = cfg.PROFILE_ICONS || {};
     names.forEach((name) => {
+      const active = name === cfg.ACTIVE_PROFILE;
       const itemWrap = document.createElement("div");
-      itemWrap.className = "rail-wrap" + (name === cfg.ACTIVE_PROFILE ? " active" : "");
+      itemWrap.className = "rail-wrap" + (active ? " active" : "");
+      itemWrap.dataset.profile = name;
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "rail-item" + (name === cfg.ACTIVE_PROFILE ? " active" : "");
-      btn.title = name;
-      btn.textContent = icons[name] || name.slice(0, 1).toUpperCase();
+      btn.className = "rail-item" + (active ? " active" : "");
+      btn.title = name + (active ? " (active)" : "");
+      btn.setAttribute("aria-label", "Profile " + name);
+      btn.setAttribute("aria-current", active ? "true" : "false");
+      // Prefer stored icon; otherwise first letter — never a bare app "P" logo treatment
+      const icon = icons[name];
+      btn.textContent = icon || name.slice(0, 1).toUpperCase();
       btn.addEventListener("click", () => onSwitchProfile(name));
       btn.addEventListener("contextmenu", (e) => {
         e.preventDefault();
@@ -244,6 +250,7 @@
       const label = document.createElement("div");
       label.className = "rail-label";
       label.textContent = name;
+      label.title = name;
       itemWrap.appendChild(btn);
       itemWrap.appendChild(label);
       wrap.appendChild(itemWrap);
@@ -708,6 +715,9 @@
           profiles: Object.keys(cfg.PROFILES || {}),
           status: (document.getElementById("status-text") || {}).textContent || "",
           hasFakeChrome: !!document.querySelector(".winbtns, .titlebar .close-btn, #btn-close"),
+          hasHomeLogo: !!document.querySelector("#rail-home, .rail-item.home, .header .logo"),
+          hasProfilesHeading: !!document.querySelector(".rail-heading"),
+          addLabel: ((document.querySelector(".rail-foot .rail-label") || {}).textContent || ""),
           urlVisibleCount: document.querySelectorAll("input.burl-input.show").length,
           curves: Array.from(document.querySelectorAll("[data-curve]")).map((el) => el.value),
         })
