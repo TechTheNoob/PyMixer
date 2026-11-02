@@ -17,6 +17,7 @@ import subprocess
 import pygetwindow as gw
 import psutil
 import win32process
+import config_store
 
 # --- GLOBAL VARIABLES ---
 ser = None
@@ -29,37 +30,11 @@ config_file_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), '
 def load_config():
     """
     Loads the configuration from config.py into a dictionary, providing defaults
-    if the file is not found or fails to parse.
+    if the file is not found or fails to parse. Applies the active profile's
+    mappings onto the top-level keys the serial reader uses.
     """
     global config
-    
-    # Initialize with default values
-    config_data = {
-        'SERIAL_PORT': 'COM3',
-        'BAUD_RATE': 115200,
-        'APP_MAPPINGS': {f'K{i+1}': '' for i in range(4)},
-        'SLIDER_REVERSE': {f'K{i+1}': False for i in range(4)},
-        'SLIDER_SENSITIVITY': {f'K{i+1}': 1.0 for i in range(4)},
-        'NUM_KNOBS': 4,
-        'NUM_BUTTONS': 4
-    }
-
-    if os.path.exists(config_file_path):
-        try:
-            # Use a simpler, more robust method to load the config file
-            local_vars = {}
-            with open(config_file_path, 'r') as f:
-                exec(f.read(), {}, local_vars)
-            
-            # Update default values with loaded values
-            config_data.update(local_vars)
-        except Exception as e:
-            print(f"Error parsing config.py: {e}. Using default values.")
-    else:
-        print("config.py not found. Using default values.")
-
-    # Update the global config dictionary
-    config = config_data
+    config = config_store.load_config(config_file_path)
 
 # --- AUDIO CONTROL FUNCTIONS ---
 
@@ -163,6 +138,26 @@ def open_webpage(url):
         print(f"Opening webpage: {url}")
     except Exception as e:
         print(f"Could not open webpage: {e}")
+
+
+def save_config_dict(cfg):
+    """Persist a full config dict (used when cycling profiles from a button)."""
+    config_store.save_config(cfg, config_file_path)
+
+
+def apply_profile_switch(name=None, cycle=False):
+    """Switch active profile and persist. Returns the new profile name."""
+    global config
+    cfg = config_store.load_config(config_file_path)
+    if cycle:
+        cfg, name = config_store.next_profile(cfg)
+    else:
+        cfg = config_store.switch_profile(cfg, name)
+    save_config_dict(cfg)
+    config = cfg
+    print(f"Active profile: {cfg.get('ACTIVE_PROFILE')}")
+    return cfg.get('ACTIVE_PROFILE')
+
 
 # --- SERIAL COMMUNICATION THREAD ---
 
@@ -275,9 +270,14 @@ def serial_reader_thread():
                             toggle_master_mute()
                         elif app_command == 'lock_pc':
                             lock_pc()
-                        elif app_command.startswith('http'):
-                            open_webpage(app_command)
-                        else:
+                        elif app_command == 'next_profile':
+                            apply_profile_switch(cycle=True)
+                        elif isinstance(app_command, str) and app_command.startswith('profile:'):
+                            apply_profile_switch(name=app_command.split(':', 1)[1])
+                        elif isinstance(app_command, str) and (app_command.startswith('http') or app_command.startswith('www.')):
+                            url = app_command if app_command.startswith('http') else 'https://' + app_command
+                            open_webpage(url)
+                        elif app_command:
                             # Default action is to toggle mute for an application
                             session = get_audio_session(app_command)
                             if session:
@@ -299,35 +299,70 @@ def serial_reader_thread():
 
 def open_config_gui(icon, item):
     """
-    Function to open the configuration GUI in a new process.
+    Open the configuration GUI in a new process.
+    Prefers the Discord-dark pywebview UI; falls back to the classic Tk GUI
+    if pywebview is not installed or the web script is missing.
     """
     try:
-        # Get the path to the Python executable
         python_executable = sys.executable
-        
-        # On Windows, prefer pythonw.exe to avoid a console window.
         if sys.platform == "win32" and "python.exe" in python_executable:
             pythonw_path = os.path.join(os.path.dirname(python_executable), "pythonw.exe")
             if os.path.exists(pythonw_path):
                 python_executable = pythonw_path
-        
-        # Construct the full path to the GUI script from the main script's path
+
         main_script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        gui_script_path = os.path.join(main_script_dir, 'config_gui.py')
-        
-        # Add debugging prints
+        web_gui = os.path.join(main_script_dir, 'config_gui_web.py')
+        tk_gui = os.path.join(main_script_dir, 'config_gui.py')
+
+        use_web = False
+        if os.path.exists(web_gui):
+            try:
+                import webview  # noqa: F401
+                use_web = True
+            except ImportError:
+                use_web = False
+
+        gui_script_path = web_gui if use_web else tk_gui
         print("Attempting to open configuration GUI...")
         print(f"Python executable path: {python_executable}")
         print(f"GUI script path: {gui_script_path}")
-        
+
         if not os.path.exists(gui_script_path):
-            print(f"Error: config_gui.py not found at {gui_script_path}")
+            print(f"Error: GUI script not found at {gui_script_path}")
             return
-            
+
         subprocess.Popen([python_executable, gui_script_path])
         print("Configuration GUI process started successfully.")
     except Exception as e:
         print(f"Failed to open configuration GUI. An unexpected error occurred: {e}")
+
+
+def _make_profile_switcher(profile_name):
+    def _switch(icon, item):
+        try:
+            apply_profile_switch(name=profile_name)
+        except Exception as e:
+            print(f"Could not switch profile: {e}")
+    return _switch
+
+
+def build_tray_menu():
+    """Build the tray menu, including a Profiles submenu."""
+    load_config()
+    profile_items = []
+    for name in config_store.list_profile_names(config):
+        # pystray checks radio items against a callable; keep it simple with plain items
+        profile_items.append(MenuItem(name, _make_profile_switcher(name)))
+    if not profile_items:
+        profile_items.append(MenuItem('Default', _make_profile_switcher('Default')))
+    profiles_menu = Menu(*profile_items)
+    return Menu(
+        MenuItem('PyMixer is Running', None, enabled=False),
+        MenuItem(f"Profile: {config.get('ACTIVE_PROFILE', 'Default')}", None, enabled=False),
+        MenuItem('Profiles', profiles_menu),
+        MenuItem('Settings', open_config_gui),
+        MenuItem('Exit', exit_program),
+    )
 
 def exit_program(icon, item):
     """
@@ -361,12 +396,11 @@ def setup_and_run_icon():
             print(f"  {port}: {desc} [{hwid}]")
         raise
 
-    icon_image = Image.open("icon.ico")
-    menu = (
-        MenuItem('PyMixer is Running', None, enabled=False),
-        MenuItem('Settings', open_config_gui),
-        MenuItem('Exit', exit_program)
-    )
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "icon.ico")
+    if not os.path.exists(icon_path):
+        icon_path = "icon.ico"
+    icon_image = Image.open(icon_path)
+    menu = build_tray_menu()
 
     icon = Icon(
         name="PyMixer",

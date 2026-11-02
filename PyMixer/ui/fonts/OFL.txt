@@ -1,0 +1,7 @@
+The Inter and Rubik font files bundled in this folder are licensed under the
+SIL Open Font License, Version 1.1.
+
+Inter — https://github.com/rsms/inter
+Rubik — https://github.com/googlefonts/rubik
+
+Full OFL text: https://openfontlicense.org/

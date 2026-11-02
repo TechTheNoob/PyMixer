@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PyMixer Configuration</title>
+  <link rel="stylesheet" href="fonts.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="scene">
+  <div class="blob b1"></div>
+  <div class="blob b2"></div>
+  <div class="blob b3"></div>
+  <div class="shell">
+    <div class="rail" id="rail">
+      <div class="rail-item home" id="rail-home" title="PyMixer">P</div>
+      <div class="rail-sep"></div>
+      <div id="rail-profiles"></div>
+      <div class="rail-sep"></div>
+      <button type="button" class="rail-item add" id="rail-add" title="Add profile">+</button>
+    </div>
+    <div class="window">
+      <div class="titlebar">
+        <div class="title-left">
+          <div class="logo">P</div>
+          <div class="title">PyMixer Configuration</div>
+          <span class="preset-tag" id="preset-tag">Default preset</span>
+        </div>
+        <div class="winbtns">
+          <span title="Minimize">─</span>
+          <span title="Maximize">□</span>
+          <span class="close-btn" id="btn-close" title="Close">✕</span>
+        </div>
+      </div>
+      <div class="content">
+        <div class="conn">
+          <div class="pill" id="status-pill"><span class="dot"></span> <span id="status-text">Checking…</span></div>
+          <div class="field">
+            <label for="port-select">Port</label>
+            <select class="chip-select" id="port-select"></select>
+          </div>
+          <div class="field">
+            <label for="baud-input">Baud</label>
+            <input class="chip-input" id="baud-input" type="number" min="9600" step="100" value="115200" />
+          </div>
+          <div class="spacer"></div>
+          <button type="button" class="save" id="btn-save">Save Configuration</button>
+        </div>
+
+        <div>
+          <div class="sec">Knobs</div>
+          <div class="channels" id="channels"></div>
+        </div>
+
+        <div class="btn-panel">
+          <div class="sec">Buttons</div>
+          <div class="btn-grid" id="buttons"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+  <div class="modal-backdrop" id="modal">
+    <div class="modal">
+      <h3 id="modal-title">Add profile</h3>
+      <input id="modal-input" type="text" maxlength="32" placeholder="Profile name" />
+      <div class="modal-actions">
+        <button type="button" class="ghost" id="modal-cancel">Cancel</button>
+        <button type="button" class="danger" id="modal-delete" style="display:none">Delete</button>
+        <button type="button" class="primary" id="modal-ok">Save</button>
+      </div>
+    </div>
+  </div>
+  <div class="rail-ctx" id="rail-ctx">
+    <button type="button" id="ctx-rename">Rename…</button>
+    <button type="button" class="danger" id="ctx-delete">Delete</button>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
