@@ -1,6 +1,13 @@
-/* Discord-dark searchable app picker for PyMixer settings */
+/* Discord-dark searchable app picker — body-level fixed portal */
 (function (global) {
   "use strict";
+
+  var MARGIN = 8;
+  var MIN_WIDTH = 240;
+  var openRoot = null;
+  var openPanel = null;
+  var openTrigger = null;
+  var boundScrollClose = null;
 
   function displayName(value) {
     if (!value) return "Unassigned";
@@ -15,123 +22,198 @@
     return String(value).replace(/\.exe$/i, "");
   }
 
-  let openPicker = null;
-
-  function closeAppPicker() {
-    if (openPicker) {
-      openPicker.classList.remove("open");
-      openPicker = null;
-    }
-  }
-
   function labelForValue(value, special, catalog) {
     if (!value) return "— none —";
-    const hit = (special || []).find((o) => o.value === value);
+    var hit = (special || []).find(function (o) { return o.value === value; });
     if (hit) return hit.label;
-    const cat = catalog || {};
-    for (const group of [cat.audio || [], cat.running || []]) {
-      const e = group.find((x) => x.value === value);
+    var cat = catalog || {};
+    var groups = [cat.audio || [], cat.running || []];
+    for (var g = 0; g < groups.length; g++) {
+      var e = groups[g].find(function (x) { return x.value === value; });
       if (e) return e.label;
     }
     return displayName(value);
   }
 
-  function createAppPicker(opts) {
-    const special = opts.special || [];
-    const getCatalog = opts.getCatalog || (() => ({ audio: [], running: [] }));
-    const onChange = opts.onChange || (() => {});
-    const compact = !!opts.compact;
-    const current = opts.current || "";
-    const looksLikeUrl = opts.looksLikeUrl || (() => false);
+  function closeAppPicker() {
+    if (openPanel && openPanel.parentNode) {
+      openPanel.parentNode.removeChild(openPanel);
+    }
+    if (openRoot) openRoot.classList.remove("open");
+    if (boundScrollClose) {
+      window.removeEventListener("scroll", boundScrollClose, true);
+      window.removeEventListener("resize", boundScrollClose);
+      boundScrollClose = null;
+    }
+    openRoot = null;
+    openPanel = null;
+    openTrigger = null;
+  }
 
-    const root = document.createElement("div");
+  function positionPanel(panel, trigger) {
+    var rect = trigger.getBoundingClientRect();
+    var vw = window.innerWidth || document.documentElement.clientWidth;
+    var vh = window.innerHeight || document.documentElement.clientHeight;
+
+    // Width: at least trigger, min 240, but never past viewport margins
+    var maxW = Math.max(MIN_WIDTH, vw - MARGIN * 2);
+    var width = Math.max(rect.width, MIN_WIDTH);
+    if (width > maxW) width = maxW;
+    // At very small windows, go near full width
+    if (vw < 480) width = Math.max(vw - MARGIN * 2, 120);
+
+    // Horizontal: prefer align to trigger left; clamp into viewport
+    var left = rect.left;
+    if (left + width > vw - MARGIN) left = vw - MARGIN - width;
+    if (left < MARGIN) left = MARGIN;
+
+    // Measure preferred height after content is in DOM
+    panel.style.visibility = "hidden";
+    panel.style.display = "flex";
+    panel.style.position = "fixed";
+    panel.style.left = "0px";
+    panel.style.top = "0px";
+    panel.style.width = width + "px";
+    panel.style.maxHeight = "none";
+    var list = panel.querySelector(".ap-list");
+    if (list) list.style.maxHeight = "";
+    // Force layout
+    var natural = panel.getBoundingClientRect().height || 280;
+
+    var spaceBelow = vh - rect.bottom - MARGIN;
+    var spaceAbove = rect.top - MARGIN;
+    var flipUp = spaceBelow < 160 && spaceAbove > spaceBelow;
+    var available = flipUp ? spaceAbove : spaceBelow;
+    // Always leave margin; ensure at least a usable height
+    available = Math.max(120, Math.min(available, vh - MARGIN * 2));
+    var maxHeight = Math.min(natural, available);
+
+    var top;
+    if (flipUp) {
+      top = rect.top - maxHeight - 4;
+      if (top < MARGIN) top = MARGIN;
+    } else {
+      top = rect.bottom + 4;
+      if (top + maxHeight > vh - MARGIN) {
+        maxHeight = Math.max(120, vh - MARGIN - top);
+      }
+      if (top < MARGIN) top = MARGIN;
+    }
+
+    // Cap list so search stays pinned; panel uses flex column
+    var searchH = 0;
+    var manualH = 0;
+    var sw = panel.querySelector(".ap-search-wrap");
+    var man = panel.querySelector(".ap-manual");
+    if (sw) searchH = sw.getBoundingClientRect().height || 44;
+    if (man) manualH = man.getBoundingClientRect().height || 36;
+    var listMax = Math.max(60, maxHeight - searchH - manualH);
+    if (list) list.style.maxHeight = listMax + "px";
+
+    panel.style.left = Math.round(left) + "px";
+    panel.style.top = Math.round(top) + "px";
+    panel.style.width = Math.round(width) + "px";
+    panel.style.maxHeight = Math.round(maxHeight) + "px";
+    panel.style.visibility = "visible";
+    panel.dataset.flip = flipUp ? "up" : "down";
+  }
+
+  function createAppPicker(opts) {
+    var special = opts.special || [];
+    var getCatalog = opts.getCatalog || function () { return { audio: [], running: [] }; };
+    var onChange = opts.onChange || function () {};
+    var compact = !!opts.compact;
+    var current = opts.current || "";
+    var looksLikeUrl = opts.looksLikeUrl || function () { return false; };
+
+    var root = document.createElement("div");
     root.className = "app-picker" + (compact ? " compact" : "");
     if (opts.dataAttr && opts.dataKey) root.dataset[opts.dataAttr] = opts.dataKey;
 
     Object.defineProperty(root, "value", {
-      get() {
-        return root.dataset.value || "";
-      },
-      set(v) {
+      get: function () { return root.dataset.value || ""; },
+      set: function (v) {
         root.dataset.value = v == null ? "" : String(v);
-        const lab = root.querySelector(".ap-label");
+        var lab = root.querySelector(".ap-label");
         if (lab) lab.textContent = labelForValue(root.dataset.value, special, getCatalog());
       },
     });
 
-    const initial = looksLikeUrl(current) ? "__url__" : current || "";
+    var initial = looksLikeUrl(current) ? "__url__" : current || "";
     root.dataset.value = initial;
 
-    const btn = document.createElement("button");
+    var btn = document.createElement("button");
     btn.type = "button";
     btn.className = "ap-btn";
     btn.innerHTML = '<span class="ap-label"></span><span class="ap-caret">▾</span>';
     btn.querySelector(".ap-label").textContent = labelForValue(initial, special, getCatalog());
 
-    const panel = document.createElement("div");
-    panel.className = "ap-panel";
-    panel.innerHTML =
-      '<div class="ap-search-wrap"><input class="ap-search" type="text" placeholder="Search apps…" spellcheck="false" /></div>' +
-      '<div class="ap-list" role="listbox"></div>' +
-      '<div class="ap-manual">' +
-      '<button type="button" class="ap-manual-toggle">Type an .exe…</button>' +
-      '<div class="ap-manual-row">' +
-      '<input class="ap-manual-input" type="text" placeholder="MyApp.exe" spellcheck="false" />' +
-      '<button type="button" class="ap-manual-ok">Use</button>' +
-      "</div></div>";
+    var showAll = false;
+    var activeIndex = -1;
+    var flat = [];
+    var panel = null;
 
-    let showAll = false;
-    let activeIndex = -1;
-    let flat = [];
+    function buildPanel() {
+      var el = document.createElement("div");
+      el.className = "ap-panel ap-panel-portal";
+      el.setAttribute("role", "dialog");
+      el.innerHTML =
+        '<div class="ap-search-wrap"><input class="ap-search" type="text" placeholder="Search apps…" spellcheck="false" /></div>' +
+        '<div class="ap-list" role="listbox"></div>' +
+        '<div class="ap-manual">' +
+        '<button type="button" class="ap-manual-toggle">Type an .exe…</button>' +
+        '<div class="ap-manual-row">' +
+        '<input class="ap-manual-input" type="text" placeholder="MyApp.exe" spellcheck="false" />' +
+        '<button type="button" class="ap-manual-ok">Use</button>' +
+        "</div></div>";
+      return el;
+    }
 
     function buildGroups(filter) {
-      const q = (filter || "").trim().toLowerCase();
-      const cat = getCatalog() || { audio: [], running: [] };
-      const groups = [];
-      const seen = new Set();
+      var q = (filter || "").trim().toLowerCase();
+      var cat = getCatalog() || { audio: [], running: [] };
+      var groups = [];
+      var seen = {};
 
       function pushGroup(title, items) {
-        const rows = [];
-        (items || []).forEach((item) => {
-          const value = item.value;
-          const label = item.label || displayName(value);
-          if (seen.has(value)) return;
-          if (q && !String(label).toLowerCase().includes(q) && !String(value).toLowerCase().includes(q))
+        var rows = [];
+        (items || []).forEach(function (item) {
+          var value = item.value;
+          var label = item.label || displayName(value);
+          if (seen[value]) return;
+          if (q && String(label).toLowerCase().indexOf(q) < 0 && String(value).toLowerCase().indexOf(q) < 0)
             return;
-          seen.add(value);
-          rows.push({ value, label });
+          seen[value] = true;
+          rows.push({ value: value, label: label });
         });
         if (rows.length) groups.push({ title: title, rows: rows });
       }
 
       pushGroup(
         "Special actions",
-        special.map((o) => ({ value: o.value, label: o.label }))
+        special.map(function (o) { return { value: o.value, label: o.label }; })
       );
 
-      if (
-        initial &&
-        initial !== "__url__" &&
-        !seen.has(initial) &&
-        /\.exe$/i.test(initial)
-      ) {
-        if (!q || initial.toLowerCase().includes(q) || displayName(initial).toLowerCase().includes(q)) {
+      if (initial && initial !== "__url__" && !seen[initial] && /\.exe$/i.test(initial)) {
+        if (!q || initial.toLowerCase().indexOf(q) >= 0 || displayName(initial).toLowerCase().indexOf(q) >= 0) {
           pushGroup("Current", [{ value: initial, label: displayName(initial) }]);
         }
       }
 
       pushGroup("Apps currently playing audio", cat.audio || []);
 
-      const running = cat.running || [];
+      var running = cat.running || [];
       if (showAll) {
         pushGroup("Other running apps", running);
       } else if (running.length) {
         groups.push({ title: "Other running apps", rows: [], expander: true, count: running.length });
         if (q) {
-          const matched = running.filter(
-            (e) =>
-              String(e.label).toLowerCase().includes(q) || String(e.value).toLowerCase().includes(q)
-          );
+          var matched = running.filter(function (e) {
+            return (
+              String(e.label).toLowerCase().indexOf(q) >= 0 ||
+              String(e.value).toLowerCase().indexOf(q) >= 0
+            );
+          });
           if (matched.length) pushGroup("Other running apps (matches)", matched);
         }
       }
@@ -139,46 +221,48 @@
     }
 
     function renderList() {
-      const list = panel.querySelector(".ap-list");
-      const filter = panel.querySelector(".ap-search").value;
+      if (!panel) return;
+      var list = panel.querySelector(".ap-list");
+      var filter = panel.querySelector(".ap-search").value;
       list.innerHTML = "";
       flat = [];
       activeIndex = -1;
-      buildGroups(filter).forEach((g) => {
-        const head = document.createElement("div");
+      buildGroups(filter).forEach(function (g) {
+        var head = document.createElement("div");
         head.className = "ap-group";
         head.textContent = g.title;
         list.appendChild(head);
         if (g.expander && !showAll) {
-          const exp = document.createElement("button");
+          var exp = document.createElement("button");
           exp.type = "button";
           exp.className = "ap-expand";
           exp.textContent = "Show all running apps… (" + g.count + ")";
-          exp.addEventListener("click", (e) => {
+          exp.addEventListener("click", function (e) {
             e.stopPropagation();
             showAll = true;
             renderList();
+            positionPanel(panel, btn);
           });
           list.appendChild(exp);
           return;
         }
-        g.rows.forEach((row) => {
-          const el = document.createElement("button");
-          el.type = "button";
-          el.className = "ap-option" + (row.value === root.value ? " selected" : "");
-          el.setAttribute("role", "option");
-          el.dataset.value = row.value;
-          el.innerHTML = '<span class="ap-opt-label"></span><span class="ap-opt-sub"></span>';
-          el.querySelector(".ap-opt-label").textContent = row.label;
+        g.rows.forEach(function (row) {
+          var opt = document.createElement("button");
+          opt.type = "button";
+          opt.className = "ap-option" + (row.value === root.value ? " selected" : "");
+          opt.setAttribute("role", "option");
+          opt.dataset.value = row.value;
+          opt.innerHTML = '<span class="ap-opt-label"></span><span class="ap-opt-sub"></span>';
+          opt.querySelector(".ap-opt-label").textContent = row.label;
           if (row.value && /\.exe$/i.test(row.value) && row.label !== row.value) {
-            el.querySelector(".ap-opt-sub").textContent = row.value;
+            opt.querySelector(".ap-opt-sub").textContent = row.value;
           }
-          el.addEventListener("click", (e) => {
+          opt.addEventListener("click", function (e) {
             e.stopPropagation();
             pick(row.value);
           });
-          list.appendChild(el);
-          flat.push(el);
+          list.appendChild(opt);
+          flat.push(opt);
         });
       });
     }
@@ -190,77 +274,107 @@
     }
 
     function open() {
-      if (openPicker === root) {
+      if (openRoot === root) {
         closeAppPicker();
         return;
       }
       closeAppPicker();
       showAll = false;
       root.classList.add("open");
-      openPicker = root;
+      panel = buildPanel();
+      document.body.appendChild(panel);
+      openRoot = root;
+      openPanel = panel;
+      openTrigger = btn;
+
       renderList();
-      const search = panel.querySelector(".ap-search");
+      positionPanel(panel, btn);
+
+      var search = panel.querySelector(".ap-search");
       search.value = "";
-      setTimeout(function () {
-        search.focus();
-      }, 0);
+      setTimeout(function () { search.focus(); }, 0);
+
+      search.addEventListener("input", function () {
+        renderList();
+        positionPanel(panel, btn);
+      });
+      search.addEventListener("keydown", function (e) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          activeIndex = Math.min(flat.length - 1, activeIndex + 1);
+          flat.forEach(function (el, i) { el.classList.toggle("active", i === activeIndex); });
+          if (flat[activeIndex]) flat[activeIndex].scrollIntoView({ block: "nearest" });
+        } else if (e.key === "ArrowUp") {
+          e.preventDefault();
+          activeIndex = Math.max(0, activeIndex - 1);
+          flat.forEach(function (el, i) { el.classList.toggle("active", i === activeIndex); });
+          if (flat[activeIndex]) flat[activeIndex].scrollIntoView({ block: "nearest" });
+        } else if (e.key === "Enter") {
+          e.preventDefault();
+          if (activeIndex >= 0 && flat[activeIndex]) pick(flat[activeIndex].dataset.value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          closeAppPicker();
+        }
+      });
+
+      var manualRow = panel.querySelector(".ap-manual-row");
+      panel.querySelector(".ap-manual-toggle").addEventListener("click", function (e) {
+        e.stopPropagation();
+        manualRow.classList.toggle("show");
+        positionPanel(panel, btn);
+        if (manualRow.classList.contains("show")) panel.querySelector(".ap-manual-input").focus();
+      });
+      panel.querySelector(".ap-manual-ok").addEventListener("click", function (e) {
+        e.stopPropagation();
+        var v = panel.querySelector(".ap-manual-input").value.trim();
+        if (!v) return;
+        if (!/\.exe$/i.test(v)) v += ".exe";
+        pick(v);
+      });
+
+      // Stop clicks inside panel from counting as outside
+      panel.addEventListener("click", function (e) { e.stopPropagation(); });
+      panel.addEventListener("mousedown", function (e) { e.stopPropagation(); });
+
+      boundScrollClose = function (e) {
+        // Ignore scrolls inside the portal list (keyboard nav / overflow)
+        if (e && e.type === "scroll" && panel && e.target && panel.contains(e.target)) return;
+        closeAppPicker();
+      };
+      window.addEventListener("scroll", boundScrollClose, true);
+      window.addEventListener("resize", boundScrollClose);
     }
 
     btn.addEventListener("click", function (e) {
       e.stopPropagation();
       open();
     });
-    panel.querySelector(".ap-search").addEventListener("input", renderList);
-    panel.querySelector(".ap-search").addEventListener("keydown", function (e) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        activeIndex = Math.min(flat.length - 1, activeIndex + 1);
-        flat.forEach(function (el, i) {
-          el.classList.toggle("active", i === activeIndex);
-        });
-        if (flat[activeIndex]) flat[activeIndex].scrollIntoView({ block: "nearest" });
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        activeIndex = Math.max(0, activeIndex - 1);
-        flat.forEach(function (el, i) {
-          el.classList.toggle("active", i === activeIndex);
-        });
-        if (flat[activeIndex]) flat[activeIndex].scrollIntoView({ block: "nearest" });
-      } else if (e.key === "Enter") {
-        e.preventDefault();
-        if (activeIndex >= 0 && flat[activeIndex]) pick(flat[activeIndex].dataset.value);
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        closeAppPicker();
-      }
-    });
-
-    const manualRow = panel.querySelector(".ap-manual-row");
-    panel.querySelector(".ap-manual-toggle").addEventListener("click", function (e) {
-      e.stopPropagation();
-      manualRow.classList.toggle("show");
-      if (manualRow.classList.contains("show")) panel.querySelector(".ap-manual-input").focus();
-    });
-    panel.querySelector(".ap-manual-ok").addEventListener("click", function (e) {
-      e.stopPropagation();
-      var v = panel.querySelector(".ap-manual-input").value.trim();
-      if (!v) return;
-      if (!/\.exe$/i.test(v)) v += ".exe";
-      pick(v);
-    });
 
     root.appendChild(btn);
-    root.appendChild(panel);
+    // Panel is portaled to body on open — not a child of root
     return root;
   }
 
   document.addEventListener("click", function (e) {
-    if (openPicker && !openPicker.contains(e.target)) closeAppPicker();
+    if (!openPanel) return;
+    if (openPanel.contains(e.target)) return;
+    if (openTrigger && openTrigger.contains(e.target)) return;
+    if (openRoot && openRoot.contains(e.target)) return;
+    closeAppPicker();
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && openPanel) {
+      e.preventDefault();
+      closeAppPicker();
+    }
   });
 
   global.PyMixerAppPicker = {
     create: createAppPicker,
     close: closeAppPicker,
     displayName: displayName,
+    _positionPanel: positionPanel, // test/debug
   };
 })(window);

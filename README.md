@@ -8,6 +8,8 @@ Hardware volume mixer for an ESP32-S3 box + a Windows tray app.
 
 ## What's new in this fork
 
+- **v1.3.3** — app picker portals to `document.body` (opaque Discord `#1e1f22`, high z-index) so it never clips inside channel/button cards; viewport clamp with 8px margins, flip up/down by available space, max-height + internal list scroll (search pinned), horizontal shift so it never overflows, near-full-width on very small windows
+
 - **Discord-dark settings window** with Rubik + Inter, thin vertical faders, round knobs, blurple Bloom glow, no borders (native Windows frame only — no fake title-bar)
 - **Live faders** — display-only meters that read the *current* Windows volume for each knob's mapped target via pycaw (master / app session / focused app); shows "—" when nothing matches. Curve/reverse are already baked into the result the tray applied.
 - **Per-knob response curve** — Linear / Gentle / Strong (`volume = x ** exponent`) so the low end gets more travel
