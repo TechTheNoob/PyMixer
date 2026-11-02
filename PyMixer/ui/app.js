@@ -444,16 +444,48 @@
       const key = "B" + i;
       const value = (cfg.APP_MAPPINGS || {})[key] || "";
       const isUrl = looksLikeUrl(value);
+      const assigned = !!(value);
       const card = document.createElement("div");
-      card.className = "bcard" + (value ? " live" : "");
+      card.className = "bcard" + (assigned ? " live" : " empty");
+      card.tabIndex = 0;
+      card.setAttribute("role", "button");
+      card.setAttribute(
+        "aria-label",
+        assigned ? key + " assigned — press Enter to change" : key + " — press Enter to assign"
+      );
       card.innerHTML = `
-        <div class="btop"><span class="bid">${key}</span><span class="bdot ${value ? "on" : ""}"></span></div>
+        <div class="btop"><span class="bid">${key}</span><span class="bdot ${assigned ? "on" : ""}"></span></div>
       `;
       const url = document.createElement("input");
       url.className = "burl-input" + (isUrl ? " show" : "");
       url.dataset.url = key;
       url.placeholder = "URL…";
       url.value = isUrl ? value : "";
+      // Keep URL independently clickable / typeable
+      ["click", "mousedown", "mouseup", "keydown", "keyup"].forEach((ev) => {
+        url.addEventListener(ev, (e) => e.stopPropagation());
+      });
+
+      const hint = document.createElement("div");
+      hint.className = "bhint";
+      hint.innerHTML = assigned
+        ? '<span class="bhint-text">Change</span><span class="bhint-caret">▾</span>'
+        : '<span class="bhint-text">Click to assign</span>';
+
+      const syncCardChrome = (v) => {
+        const on = !!v;
+        card.classList.toggle("live", on);
+        card.classList.toggle("empty", !on);
+        card.querySelector(".bdot").classList.toggle("on", on);
+        card.setAttribute(
+          "aria-label",
+          on ? key + " assigned — press Enter to change" : key + " — press Enter to assign"
+        );
+        hint.innerHTML = on
+          ? '<span class="bhint-text">Change</span><span class="bhint-caret">▾</span>'
+          : '<span class="bhint-text">Click to assign</span>';
+      };
+
       const sel = window.PyMixerAppPicker.create({
         special: BUTTON_SPECIAL,
         current: isUrl ? "__url__" : value,
@@ -466,11 +498,29 @@
           const show = v === "__url__";
           url.classList.toggle("show", show);
           if (!show) url.value = "";
-          card.classList.toggle("live", !!v);
-          card.querySelector(".bdot").classList.toggle("on", !!v);
+          syncCardChrome(v);
         },
       });
+
+      const openPicker = () => {
+        if (typeof sel.open === "function") sel.open(card);
+      };
+
+      card.addEventListener("click", (e) => {
+        if (url.contains(e.target)) return;
+        e.preventDefault();
+        openPicker();
+      });
+      card.addEventListener("keydown", (e) => {
+        if (e.target === url) return;
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          openPicker();
+        }
+      });
+
       card.appendChild(sel);
+      card.appendChild(hint);
       card.appendChild(url);
       root.appendChild(card);
     }

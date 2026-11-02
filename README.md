@@ -8,6 +8,8 @@ Hardware volume mixer for an ESP32-S3 box + a Windows tray app.
 
 ## What's new in this fork
 
+- **v1.3.4** — whole button cards (B1–B10) are clickable with hover lift, focus ring, and Enter/Space; empty cards show **Click to assign**, assigned cards reveal **Change ▾** on hover; URL field stays independently editable; knob app triggers are clearer field-style pills with chevrons
+
 - **v1.3.3** — app picker portals to `document.body` (opaque Discord `#1e1f22`, high z-index) so it never clips inside channel/button cards; viewport clamp with 8px margins, flip up/down by available space, max-height + internal list scroll (search pinned), horizontal shift so it never overflows, near-full-width on very small windows
 
 - **Discord-dark settings window** with Rubik + Inter, thin vertical faders, round knobs, blurple Bloom glow, no borders (native Windows frame only — no fake title-bar)

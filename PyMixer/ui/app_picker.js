@@ -241,7 +241,7 @@
             e.stopPropagation();
             showAll = true;
             renderList();
-            positionPanel(panel, btn);
+            positionPanel(panel, openTrigger || btn);
           });
           list.appendChild(exp);
           return;
@@ -273,7 +273,7 @@
       onChange(value);
     }
 
-    function open() {
+    function open(anchor) {
       if (openRoot === root) {
         closeAppPicker();
         return;
@@ -285,10 +285,11 @@
       document.body.appendChild(panel);
       openRoot = root;
       openPanel = panel;
-      openTrigger = btn;
+      var trigger = anchor || btn;
+      openTrigger = trigger;
 
       renderList();
-      positionPanel(panel, btn);
+      positionPanel(panel, trigger);
 
       var search = panel.querySelector(".ap-search");
       search.value = "";
@@ -296,7 +297,7 @@
 
       search.addEventListener("input", function () {
         renderList();
-        positionPanel(panel, btn);
+        positionPanel(panel, openTrigger || btn);
       });
       search.addEventListener("keydown", function (e) {
         if (e.key === "ArrowDown") {
@@ -322,7 +323,7 @@
       panel.querySelector(".ap-manual-toggle").addEventListener("click", function (e) {
         e.stopPropagation();
         manualRow.classList.toggle("show");
-        positionPanel(panel, btn);
+        positionPanel(panel, openTrigger || btn);
         if (manualRow.classList.contains("show")) panel.querySelector(".ap-manual-input").focus();
       });
       panel.querySelector(".ap-manual-ok").addEventListener("click", function (e) {
@@ -348,10 +349,12 @@
 
     btn.addEventListener("click", function (e) {
       e.stopPropagation();
-      open();
+      open(compact ? (root.closest(".bcard") || btn) : btn);
     });
 
     root.appendChild(btn);
+    root.open = open;
+    root.getTrigger = function () { return btn; };
     // Panel is portaled to body on open — not a child of root
     return root;
   }

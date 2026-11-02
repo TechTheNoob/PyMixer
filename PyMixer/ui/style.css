@@ -217,8 +217,20 @@
   .bcard {
     background: var(--deep); border-radius: 8px; padding: 7px 8px;
     display: flex; flex-direction: column; gap: 3px;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+    outline: none;
   }
   .bcard.live { background: rgba(88,101,242,0.18); }
+  .bcard:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.28);
+  }
+  .bcard.empty:hover { background: #2b2d31; }
+  .bcard.live:hover { background: rgba(88,101,242,0.28); }
+  .bcard:focus-visible {
+    box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--blurple);
+  }
   .btop { display: flex; align-items: center; justify-content: space-between; }
   .bid {
     font-family: var(--rubik); font-size: 10px; font-weight: 700; color: #c9cdfb;
@@ -237,6 +249,27 @@
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .bcard:not(.live) .burl { opacity: 0.4; }
+  /* Card assign/change hints */
+  .bhint {
+    display: flex; align-items: center; gap: 4px;
+    font-family: var(--inter); font-size: 9px; font-weight: 500;
+    color: var(--muted); line-height: 1.2; min-height: 12px;
+    pointer-events: none; user-select: none;
+  }
+  .bcard.empty .bhint { color: #949ba4; }
+  .bcard.live .bhint {
+    opacity: 0; transform: translateY(2px);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+  }
+  .bcard.live:hover .bhint,
+  .bcard.live:focus-visible .bhint {
+    opacity: 1; transform: translateY(0); color: #c9cdfb;
+  }
+  .bhint-caret { font-size: 8px; color: #c9cdfb; }
+  /* Compact picker inside card — label is primary; caret shown via hint on assigned */
+  .bcard .app-picker.compact .ap-caret { display: none; }
+  .bcard .app-picker.compact .ap-btn { pointer-events: none; /* card handles open */ }
+  .bcard .burl-input { cursor: text; pointer-events: auto; }
 
   /* Interactive controls (pywebview / live UI) */
   html, body { width: 100%; height: 100%; min-width: 960px; min-height: 600px; }
@@ -364,18 +397,30 @@
   .app-picker { position: relative; width: 100%; z-index: 1; }
   .app-picker .ap-btn {
     width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 6px;
-    background: var(--deep); color: var(--text); border: none; outline: none;
+    background: var(--elev); color: var(--text); border: none; outline: none;
     font-family: var(--inter); font-size: 10px; font-weight: 500;
-    padding: 5px 6px; border-radius: 6px; cursor: pointer; text-align: left;
+    padding: 6px 8px; border-radius: 8px; cursor: pointer; text-align: left;
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+    transition: background 0.12s ease, box-shadow 0.12s ease;
+  }
+  .app-picker .ap-btn:hover {
+    background: #35373c;
+    box-shadow: inset 0 0 0 1px rgba(88,101,242,0.35);
+  }
+  .app-picker .ap-btn:focus-visible {
+    box-shadow: 0 0 0 2px var(--blurple);
   }
   .app-picker.compact .ap-btn {
     background: transparent; font-family: var(--rubik); font-size: 12px; font-weight: 600;
-    padding: 0;
+    padding: 0; box-shadow: none; border-radius: 0;
   }
+  .app-picker.compact .ap-btn:hover,
+  .app-picker.compact .ap-btn:focus-visible { background: transparent; box-shadow: none; }
   .app-picker .ap-label {
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
   }
-  .app-picker .ap-caret { color: var(--muted); font-size: 9px; flex-shrink: 0; }
+  .app-picker .ap-caret { color: var(--muted); font-size: 10px; flex-shrink: 0; }
+  .app-picker:not(.compact) .ap-caret { color: #b5bac1; }
 
   /* Portal panel — fixed to viewport, fully opaque, escapes card stacking contexts */
   .ap-panel-portal,
