@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>PyMixer Virtual Controller</title>
+  <link rel="stylesheet" href="fonts.css" />
+  <link rel="stylesheet" href="virtual_board.css" />
+</head>
+<body>
+  <div class="board" id="board">
+    <header class="head">
+      <div>
+        <div class="title">Virtual controller</div>
+        <div class="sub" id="subtitle">Moves change real Windows volume</div>
+      </div>
+      <div class="banner" id="banner" hidden>Real board connected</div>
+    </header>
+    <section class="knobs" id="knobs" aria-label="Knobs"></section>
+    <section class="btns" id="btns" aria-label="Buttons"></section>
+  </div>
+  <script src="virtual_board.js"></script>
+</body>
+</html>

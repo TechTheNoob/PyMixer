@@ -79,6 +79,9 @@ class Api:
             "app_catalog": catalog,
             "connected": _port_seems_open(str(cfg.get("SERIAL_PORT", ""))),
             "live": volume_read.live_levels_from_config(cfg),
+            "demo": bool(os.environ.get("PYMIXER_DEMO")),
+            "virtual_controller_enabled": bool(cfg.get("VIRTUAL_CONTROLLER_ENABLED")),
+            "show_controller": bool(cfg.get("VIRTUAL_CONTROLLER_ENABLED")),
         }
 
     def get_live_levels(self) -> Dict[str, Any]:
@@ -100,6 +103,19 @@ class Api:
     def get_app_catalog(self) -> Dict[str, Any]:
         """Fresh audio-session / running-app lists for the dark app picker."""
         return app_catalog.build_app_catalog()
+
+    def show_controller(self) -> bool:
+        """Request the virtual controller window (flag polled by tray app)."""
+        try:
+            cfg = config_store.load_config(self.config_file)
+            if not cfg.get("VIRTUAL_CONTROLLER_ENABLED"):
+                return False
+            import tray_popup
+            tray_popup._touch(tray_popup.show_controller_flag_path())
+            return True
+        except Exception as exc:
+            print(f"show_controller: {exc}")
+            return False
 
     def browse_for_app(self) -> Optional[str]:
         """Native file dialog for picking an .exe / .lnk to launch from a button."""
@@ -127,6 +143,11 @@ class Api:
                 "error": "Could not save settings. Close other PyMixer windows and try again.",
             }
         saved = config_store.load_config(self.config_file)
+        try:
+            import tray_popup
+            tray_popup._touch(tray_popup.refresh_flag_path())
+        except Exception:
+            pass
         saved["ok"] = True
         return saved
 

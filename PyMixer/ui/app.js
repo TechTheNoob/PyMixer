@@ -32,6 +32,8 @@
     appCatalog: { audio: [], running: [], installed: [], current: null },
     connected: false,
     demo: false,
+    showController: false,
+    virtualControllerEnabled: false,
     modalMode: null, // 'add' | 'rename'
     ctxProfile: null,
     live: { stale: true, knobs: {}, connected: false },
@@ -112,6 +114,8 @@
   function offlineShell() {
     /* Bridge missing: paint an empty shell. Faders stay "—" until pywebviewready. */
     state.demo = false;
+    state.showController = false;
+    state.virtualControllerEnabled = false;
     state.connected = false;
     state.ports = [];
     state.apps = [];
@@ -146,6 +150,8 @@
       state.connected = !!data.connected;
       if (data.live) state.live = data.live;
       state.demo = !!data.demo;
+      state.showController = !!data.show_controller;
+      state.virtualControllerEnabled = !!data.virtual_controller_enabled;
     } catch (err) {
       console.warn("get_state failed, waiting for bridge:", err);
       offlineShell();
@@ -158,6 +164,9 @@
     if (!cfg) return null;
     cfg.SERIAL_PORT = $("port-select").value;
     cfg.BAUD_RATE = parseInt($("baud-input").value, 10) || 115200;
+    const _vc = $("chk-virtual-controller");
+    if (_vc) cfg.VIRTUAL_CONTROLLER_ENABLED = !!_vc.checked;
+
 
     const numKnobs = cfg.NUM_KNOBS || 5;
     const numButtons = cfg.NUM_BUTTONS || 10;
@@ -517,6 +526,10 @@
     const cfg = state.config;
     const pill = $("status-pill");
     const text = $("status-text");
+    const cbtn = $("btn-controller");
+    const cchk = $("chk-virtual-controller");
+    if (cchk) cchk.checked = !!state.virtualControllerEnabled;
+    if (cbtn) cbtn.hidden = !state.virtualControllerEnabled;
     if (state.demo) {
       pill.classList.remove("off");
       text.textContent = "Demo";
@@ -750,6 +763,29 @@
 
   function wire() {
     $("btn-save").addEventListener("click", onSave);
+
+  const vcChk = $("chk-virtual-controller");
+  if (vcChk) {
+    vcChk.addEventListener("change", () => {
+      state.virtualControllerEnabled = !!vcChk.checked;
+      const b = $("btn-controller");
+      if (b) b.hidden = !vcChk.checked;
+    });
+  }
+
+    const cbtn = $("btn-controller");
+    if (cbtn) {
+      cbtn.addEventListener("click", async () => {
+        // Ensure toggle is on in the form; user must Save for tray persistence
+        const _vc = $("chk-virtual-controller");
+        if (_vc && !_vc.checked) {
+          _vc.checked = true;
+          state.virtualControllerEnabled = true;
+          if ($("btn-controller")) $("btn-controller").hidden = false;
+        }
+        try { await call("show_controller"); } catch (e) { console.warn(e); }
+      });
+    }
     $("rail-add").addEventListener("click", () => openModal("add", ""));
     $("modal-cancel").addEventListener("click", closeModal);
     $("modal-ok").addEventListener("click", onModalOk);

@@ -127,6 +127,8 @@
     }
     renderLevels();
     renderProfiles();
+    const cbtn = $("btn-controller");
+    if (cbtn) cbtn.hidden = !data.show_controller;
     stamp();
   }
 
@@ -145,6 +147,15 @@
     try {
       await call("open_settings");
       await call("dismiss");
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  async function onController() {
+    if (!api()) return;
+    try {
+      await call("show_controller");
     } catch (e) {
       console.warn(e);
     }
@@ -192,9 +203,11 @@
     const s = $("btn-settings");
     const r = $("btn-reconnect");
     const q = $("btn-quit");
+    const c = $("btn-controller");
     if (s) s.addEventListener("click", onSettings);
     if (r) r.addEventListener("click", onReconnect);
     if (q) q.addEventListener("click", onQuit);
+    if (c) c.addEventListener("click", onController);
     let blurTimer = null;
     const dismiss = () => call("dismiss").catch(() => {});
     window.addEventListener("keydown", (e) => {

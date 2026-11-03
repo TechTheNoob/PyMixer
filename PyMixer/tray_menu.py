@@ -8,18 +8,21 @@ Always read fresh state from config_store at evaluation time.
 
 from __future__ import annotations
 
+import os
+
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import config_store
 
-MenuFingerprint = Tuple[Tuple[str, ...], str, str]
+MenuFingerprint = Tuple[Tuple[str, ...], str, str, bool]
 
 
 def menu_fingerprint(cfg: Dict[str, Any]) -> MenuFingerprint:
     names = tuple(config_store.list_profile_names(cfg))
     active = str(cfg.get("ACTIVE_PROFILE") or "Default")
     port = str(cfg.get("SERIAL_PORT") or "")
-    return (names, active, port)
+    vc = bool(cfg.get("VIRTUAL_CONTROLLER_ENABLED"))
+    return (names, active, port, vc)
 
 
 def header_label(cfg: Optional[Dict[str, Any]] = None, path: Optional[str] = None) -> str:
@@ -101,7 +104,15 @@ def build_pystray_menu(
                 radio=True,
             )
 
-    return Menu(
+    def _show_controller(_item=None):
+        try:
+            import tray_popup
+            if tray_popup.controller_enabled():
+                tray_popup._touch(tray_popup.show_controller_flag_path())
+        except Exception:
+            pass
+
+    items = [
         MenuItem("Open PyMixer", open_popup, default=True, visible=False),
         MenuItem(_header_text, None, enabled=False),
         MenuItem(_status_text, None, enabled=False),
@@ -111,6 +122,17 @@ def build_pystray_menu(
         Menu.SEPARATOR,
         MenuItem("↻  Reload config", reload_config),
         MenuItem("↻  Reconnect", reconnect),
+    ]
+    # Shown only when Settings → Virtual controller is enabled (saved).
+    try:
+        import tray_popup as _tp
+        _vc_on = _tp.controller_enabled()
+    except Exception:
+        _vc_on = False
+    if _vc_on:
+        items.append(MenuItem("🎛  Show virtual controller", _show_controller))
+    items.extend([
         Menu.SEPARATOR,
         MenuItem("✕  Quit", quit_app),
-    )
+    ])
+    return Menu(*items)

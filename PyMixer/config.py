@@ -1,7 +1,12 @@
-SERIAL_PORT = 'COM5'
+SERIAL_PORT = 'COM3'
 BAUD_RATE = 115200
 NUM_KNOBS = 5
 NUM_BUTTONS = 10
-APP_MAPPINGS = {'K1': 'focused_app', 'K3': 'firefox.exe', 'K4': 'Discord.exe', 'K5': 'explorer.exe', 'B1': 'chrome.exe', 'B2': 'spotify.exe', 'K2': '', 'B3': 'www.youtube.com', 'B4': '', 'B5': '', 'B6': '', 'B7': '', 'B8': '', 'B9': '', 'B10': ''}
-SLIDER_REVERSE = {'K1': True, 'K2': True, 'K3': True, 'K4': True, 'K5': True}
+APP_MAPPINGS = {'K1': 'master_volume', 'K2': '', 'K3': '', 'K4': '', 'K5': '', 'B1': '', 'B2': '', 'B3': '', 'B4': '', 'B5': '', 'B6': '', 'B7': '', 'B8': '', 'B9': '', 'B10': ''}
+SLIDER_REVERSE = {'K1': False, 'K2': False, 'K3': False, 'K4': False, 'K5': False}
 SLIDER_SENSITIVITY = {'K1': 1.0, 'K2': 1.0, 'K3': 1.0, 'K4': 1.0, 'K5': 1.0}
+SLIDER_CURVE = {'K1': 'linear', 'K2': 'linear', 'K3': 'linear', 'K4': 'linear', 'K5': 'linear'}
+PROFILES = {'Default': {'APP_MAPPINGS': {'K1': 'master_volume', 'K2': '', 'K3': '', 'K4': '', 'K5': '', 'B1': '', 'B2': '', 'B3': '', 'B4': '', 'B5': '', 'B6': '', 'B7': '', 'B8': '', 'B9': '', 'B10': ''}, 'SLIDER_REVERSE': {'K1': False, 'K2': False, 'K3': False, 'K4': False, 'K5': False}, 'SLIDER_SENSITIVITY': {'K1': 1.0, 'K2': 1.0, 'K3': 1.0, 'K4': 1.0, 'K5': 1.0}, 'SLIDER_CURVE': {'K1': 'linear', 'K2': 'linear', 'K3': 'linear', 'K4': 'linear', 'K5': 'linear'}}}
+ACTIVE_PROFILE = 'Default'
+PROFILE_ICONS = {'Default': 'D'}
+VIRTUAL_CONTROLLER_ENABLED = False

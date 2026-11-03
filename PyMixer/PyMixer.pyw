@@ -18,6 +18,7 @@ import pygetwindow as gw
 import psutil
 import win32process
 import config_store
+import virtual_board
 import tray_popup
 import tray_menu
 import app_launch
@@ -380,25 +381,63 @@ def serial_reader_thread():
                     prev_curve = new_curve
                     prev_reverse = new_reverse
 
-            if not ser or not ser.is_open:
-                time.sleep(1)
+            num_knobs = int(config.get('NUM_KNOBS') or 5)
+            num_buttons = int(config.get('NUM_BUTTONS') or 10)
+            vc_on = bool(config.get('VIRTUAL_CONTROLLER_ENABLED'))
+
+            data = None
+            from_real = False
+            if ser and getattr(ser, 'is_open', False):
+                try:
+                    line = ser.readline().decode('utf-8').strip()
+                except Exception:
+                    line = ''
+                if line:
+                    try:
+                        cand = [int(val) for val in line.split('|')]
+                        if len(cand) == num_knobs + num_buttons:
+                            data = cand
+                            from_real = True
+                            # FakeSerial / DEMO is not a physical board — skip pause latch
+                            port_name = str(getattr(ser, "port", "") or "")
+                            is_demo = (
+                                port_name.upper() == "DEMO"
+                                or bool(os.environ.get("PYMIXER_DEMO"))
+                            )
+                            if not is_demo:
+                                try:
+                                    virtual_board.note_real_board_line(line)
+                                except Exception:
+                                    pass
+                    except ValueError:
+                        pass
+
+            if not from_real:
+                try:
+                    virtual_board.clear_real_board_if_quiet()
+                except Exception:
+                    pass
+
+            if data is None and vc_on and not virtual_board.real_board_active():
+                # Drive the same apply path from the virtual controller state
+                data = virtual_board.frame_values(num_knobs, num_buttons)
+                # Merge pulsed virtual buttons as rising edges this tick
+                try:
+                    pulsed = set(virtual_board.consume_button_events())
+                except Exception:
+                    pulsed = set()
+                for key in pulsed:
+                    try:
+                        bi = int(key[1:]) - 1
+                    except ValueError:
+                        continue
+                    if 0 <= bi < num_buttons:
+                        data[num_knobs + bi] = 1
+
+            if data is None:
+                time.sleep(0.05 if vc_on else 0.25)
                 continue
 
-            line = ser.readline().decode('utf-8').strip()
-            if not line:
-                continue
-
-            try:
-                data = [int(val) for val in line.split('|')]
-            except ValueError:
-                continue
-            
-            num_knobs = config.get('NUM_KNOBS', 4)
-            num_buttons = config.get('NUM_BUTTONS', 4)
-
-            if len(data) != num_knobs + num_buttons:
-                continue
-            
             knob_values = data[:num_knobs]
             button_values = data[num_knobs:]
 
@@ -476,6 +515,25 @@ def serial_reader_thread():
 _tray_icon = None  # set in setup_and_run_icon for menu refresh / quit
 
 
+def _pythonw_exe():
+    exe = sys.executable
+    if sys.platform == "win32" and exe.lower().endswith("python.exe"):
+        candidate = os.path.join(os.path.dirname(exe), "pythonw.exe")
+        if os.path.exists(candidate):
+            return candidate
+    return exe
+
+
+def _popen_no_window(args, *, cwd=None):
+    kwargs = {"cwd": cwd, "close_fds": True}
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        kwargs["stdin"] = subprocess.DEVNULL
+        kwargs["stdout"] = subprocess.DEVNULL
+        kwargs["stderr"] = subprocess.DEVNULL
+    return subprocess.Popen(args, **kwargs)
+
+
 def open_config_gui(icon=None, item=None):
     """
     Open the configuration GUI in a new process.
@@ -483,12 +541,7 @@ def open_config_gui(icon=None, item=None):
     if pywebview is not installed or the web script is missing.
     """
     try:
-        python_executable = sys.executable
-        if sys.platform == "win32" and "python.exe" in python_executable:
-            pythonw_path = os.path.join(os.path.dirname(python_executable), "pythonw.exe")
-            if os.path.exists(pythonw_path):
-                python_executable = pythonw_path
-
+        python_executable = _pythonw_exe()
         main_script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
         web_gui = os.path.join(main_script_dir, 'config_gui_web.py')
         tk_gui = os.path.join(main_script_dir, 'config_gui.py')
@@ -502,18 +555,36 @@ def open_config_gui(icon=None, item=None):
                 use_web = False
 
         gui_script_path = web_gui if use_web else tk_gui
-        print("Attempting to open configuration GUI...")
-        print(f"Python executable path: {python_executable}")
-        print(f"GUI script path: {gui_script_path}")
-
         if not os.path.exists(gui_script_path):
             print(f"Error: GUI script not found at {gui_script_path}")
             return
 
-        subprocess.Popen([python_executable, gui_script_path])
-        print("Configuration GUI process started successfully.")
+        _popen_no_window([python_executable, gui_script_path], cwd=main_script_dir)
     except Exception as e:
         print(f"Failed to open configuration GUI. An unexpected error occurred: {e}")
+
+
+def request_show_virtual_controller():
+    """
+    Ensure the virtual controller process is running / shown when enabled in Settings.
+    """
+    try:
+        if not (config or {}).get("VIRTUAL_CONTROLLER_ENABLED"):
+            # Reload once in case flag watcher fired right after Save
+            try:
+                load_config()
+            except Exception:
+                pass
+        if not (config or {}).get("VIRTUAL_CONTROLLER_ENABLED"):
+            return
+        main_script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
+        script = os.path.join(main_script_dir, "virtual_controller.py")
+        if not os.path.exists(script):
+            return
+        virtual_board.touch_show_flag()
+        _popen_no_window([_pythonw_exe(), script], cwd=main_script_dir)
+    except Exception as e:
+        print(f"request_show_virtual_controller: {e}")
 
 
 def open_tray_popup(icon=None, item=None):
@@ -636,6 +707,7 @@ def _flag_watcher():
         'reconnect': 0.0,
         'settings': 0.0,
         'refresh': 0.0,
+        'controller': 0.0,
     }
     while running:
         time.sleep(0.35)
@@ -683,6 +755,16 @@ def _flag_watcher():
                         pass
                     load_config()
                     refresh_tray_menu()
+            cf = tray_popup.show_controller_flag_path()
+            if os.path.exists(cf):
+                m = os.path.getmtime(cf)
+                if m > seen['controller']:
+                    seen['controller'] = m
+                    try:
+                        os.unlink(cf)
+                    except OSError:
+                        pass
+                    request_show_virtual_controller()
         except Exception:
             pass
 
@@ -715,18 +797,18 @@ def setup_and_run_icon():
     try:
         ser = serial.Serial(config['SERIAL_PORT'], config['BAUD_RATE'], timeout=1)
         print(f"Connected to ESP32 on port {config['SERIAL_PORT']}")
-
-        thread = threading.Thread(target=serial_reader_thread)
-        thread.daemon = True
-        thread.start()
     except serial.SerialException as e:
         print(f"Error: Could not open serial port {config['SERIAL_PORT']}. Please check the port number.")
         print(f"Details: {e}")
         ports = serial.tools.list_ports.comports()
         for port, desc, hwid in sorted(ports):
             print(f"  {port}: {desc} [{hwid}]")
-        # Keep running so the user can open Settings / Reconnect from the tray
+        # Keep running so the user can open Settings / Reconnect / Virtual controller
         ser = None
+
+    # Always run the reader: virtual controller uses the same apply path when quiet
+    thread = threading.Thread(target=serial_reader_thread, daemon=True)
+    thread.start()
 
     global _menu_fingerprint
     _menu_fingerprint = tray_menu.menu_fingerprint(config)

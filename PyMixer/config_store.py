@@ -254,6 +254,10 @@ def migrate_profiles(cfg: Dict[str, Any], *, apply: bool = True) -> Dict[str, An
         out["PROFILE_ICONS"] = {}
     for name in out["PROFILES"]:
         out["PROFILE_ICONS"].setdefault(name, _default_icon(name))
+    if "VIRTUAL_CONTROLLER_ENABLED" not in out:
+        out["VIRTUAL_CONTROLLER_ENABLED"] = False
+    else:
+        out["VIRTUAL_CONTROLLER_ENABLED"] = bool(out.get("VIRTUAL_CONTROLLER_ENABLED"))
     if apply:
         apply_active_profile(out)
     return out
@@ -358,6 +362,7 @@ def save_config(cfg: Dict[str, Any], path: Optional[str] = None) -> None:
         f"PROFILES = {_repr_write(cfg['PROFILES'])}",
         f"ACTIVE_PROFILE = {_repr_write(cfg['ACTIVE_PROFILE'])}",
         f"PROFILE_ICONS = {_repr_write(cfg.get('PROFILE_ICONS', {}))}",
+        f"VIRTUAL_CONTROLLER_ENABLED = {_repr_write(bool(cfg.get('VIRTUAL_CONTROLLER_ENABLED', False)))}",
         "",
     ]
     body = "\n".join(lines)

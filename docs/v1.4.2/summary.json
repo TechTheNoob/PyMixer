@@ -1,0 +1,101 @@
+{
+  "passed": 19,
+  "failed": 0,
+  "results": [
+    {
+      "name": "default_vc_off",
+      "ok": true,
+      "detail": "VIRTUAL_CONTROLLER_ENABLED False after save"
+    },
+    {
+      "name": "launch_windowless",
+      "ok": true,
+      "detail": "tray process present"
+    },
+    {
+      "name": "toggle_on_save_persist",
+      "ok": true,
+      "detail": "True on disk"
+    },
+    {
+      "name": "show_controller",
+      "ok": true,
+      "detail": "spawned virtual_controller"
+    },
+    {
+      "name": "sliders_change_brave",
+      "ok": true,
+      "detail": "{'lowish': 0.022082746028900146, 'highish': 0.7517085671424866, 'mid': 0.2866694927215576}"
+    },
+    {
+      "name": "curves_apply_config",
+      "ok": true,
+      "detail": "K2 gentle"
+    },
+    {
+      "name": "buttons_pulse",
+      "ok": true,
+      "detail": "B5 pulsed"
+    },
+    {
+      "name": "profiles_switch",
+      "ok": true,
+      "detail": "Default"
+    },
+    {
+      "name": "real_board_pause_on",
+      "ok": true,
+      "detail": "active after simulate"
+    },
+    {
+      "name": "real_board_blocks_virtual",
+      "ok": true,
+      "detail": "K2 stayed 512"
+    },
+    {
+      "name": "real_board_resume",
+      "ok": true,
+      "detail": "~3s quiet"
+    },
+    {
+      "name": "tray_show_reopen_flag",
+      "ok": true,
+      "detail": "show flag touched"
+    },
+    {
+      "name": "toggle_off_save_persist",
+      "ok": true,
+      "detail": "False"
+    },
+    {
+      "name": "screenshot_settings_900",
+      "ok": true,
+      "detail": "C:\\Users\\TechT\\Desktop\\PyMixer\\docs\\v142-verify\\settings-900.png"
+    },
+    {
+      "name": "screenshot_settings_1000",
+      "ok": true,
+      "detail": "C:\\Users\\TechT\\Desktop\\PyMixer\\docs\\v142-verify\\settings-1000.png"
+    },
+    {
+      "name": "screenshot_settings_1280",
+      "ok": true,
+      "detail": "C:\\Users\\TechT\\Desktop\\PyMixer\\docs\\v142-verify\\settings-1280.png"
+    },
+    {
+      "name": "screenshot_controller",
+      "ok": true,
+      "detail": "PyMixer Virtual Controller -> C:\\Users\\TechT\\Desktop\\PyMixer\\docs\\v142-verify\\virtual-controller.png"
+    },
+    {
+      "name": "screenshot_tray_popup",
+      "ok": true,
+      "detail": "C:\\Users\\TechT\\Desktop\\PyMixer\\docs\\v142-verify\\tray-popup.png"
+    },
+    {
+      "name": "tray_hide_when_disabled",
+      "ok": true,
+      "detail": "controller_enabled False"
+    }
+  ]
+}

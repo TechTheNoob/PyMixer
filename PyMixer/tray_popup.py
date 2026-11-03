@@ -32,6 +32,7 @@ QUIT_FLAG = "pymixer_tray_quit.flag"
 RECONNECT_FLAG = "pymixer_tray_reconnect.flag"
 OPEN_SETTINGS_FLAG = "pymixer_tray_open_settings.flag"
 REFRESH_FLAG = "pymixer_tray_refresh.flag"
+SHOW_CONTROLLER_FLAG = "pymixer_show_controller.flag"
 
 # Process-local dismiss / visibility state
 _window = None
@@ -63,6 +64,20 @@ def open_settings_flag_path() -> str:
 
 def refresh_flag_path() -> str:
     return os.path.join(HERE, REFRESH_FLAG)
+
+
+def show_controller_flag_path() -> str:
+    return os.path.join(HERE, SHOW_CONTROLLER_FLAG)
+
+
+def controller_enabled() -> bool:
+    """True when Settings toggle is on (persisted in config.py)."""
+    try:
+        import config_store
+        cfg = config_store.load_config(os.path.join(HERE, "config.py"))
+        return bool(cfg.get("VIRTUAL_CONTROLLER_ENABLED"))
+    except Exception:
+        return False
 
 
 def _touch(path: str) -> None:
@@ -156,17 +171,34 @@ def request_show() -> bool:
     return False
 
 
+
+def _popen_pythonw(args, *, cwd=None):
+    """Launch with pythonw + CREATE_NO_WINDOW so no console flashes on Windows."""
+    exe = sys.executable
+    if sys.platform == "win32":
+        if exe.lower().endswith("python.exe"):
+            candidate = os.path.join(os.path.dirname(exe), "pythonw.exe")
+            if os.path.exists(candidate):
+                exe = candidate
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        return subprocess.Popen(
+            [exe, *args],
+            cwd=cwd or HERE,
+            close_fds=True,
+            creationflags=creationflags,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    return subprocess.Popen([exe, *args], cwd=cwd or HERE, close_fds=True)
+
+
 def launch_popup_process() -> None:
     if request_show():
         return
-    python_executable = sys.executable
-    if sys.platform == "win32" and "python.exe" in python_executable:
-        pythonw = os.path.join(os.path.dirname(python_executable), "pythonw.exe")
-        if os.path.exists(pythonw):
-            python_executable = pythonw
     script = os.path.join(HERE, "tray_popup.py")
     try:
-        subprocess.Popen([python_executable, script], cwd=HERE, close_fds=True)
+        _popen_pythonw([script], cwd=HERE)
     except Exception as exc:
         print(f"Could not launch tray popup: {exc}")
 
@@ -282,6 +314,7 @@ class PopupApi:
             "icons": cfg.get("PROFILE_ICONS") or {},
             "connected": bool(connected),
             "live": live,
+            "show_controller": bool(controller_enabled()),
         }
 
     def get_live(self) -> Dict[str, Any]:
@@ -300,16 +333,18 @@ class PopupApi:
         gui = os.path.join(HERE, "config_gui_web.py")
         if not os.path.exists(gui):
             gui = os.path.join(HERE, "config_gui.py")
-        python_executable = sys.executable
-        if sys.platform == "win32" and "python.exe" in python_executable:
-            pythonw = os.path.join(os.path.dirname(python_executable), "pythonw.exe")
-            if os.path.exists(pythonw):
-                python_executable = pythonw
         try:
-            subprocess.Popen([python_executable, gui], cwd=HERE, close_fds=True)
+            _popen_pythonw([gui], cwd=HERE)
         except Exception as exc:
             print(f"Could not open settings: {exc}")
         self.dismiss()
+
+    def show_controller(self) -> Dict[str, Any]:
+        """Demo-only: ask the main process to show the virtual controller window."""
+        if controller_enabled():
+            _touch(show_controller_flag_path())
+        self.dismiss()
+        return self.get_popup_state()
 
     def reconnect(self) -> Dict[str, Any]:
         _touch(reconnect_flag_path())
