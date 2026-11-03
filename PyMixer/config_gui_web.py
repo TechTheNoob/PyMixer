@@ -101,6 +101,17 @@ class Api:
         """Fresh audio-session / running-app lists for the dark app picker."""
         return app_catalog.build_app_catalog()
 
+    def browse_for_app(self) -> Optional[str]:
+        """Native file dialog for picking an .exe / .lnk to launch from a button."""
+        try:
+            import app_launch
+
+            return app_launch.browse_for_app()
+        except Exception as exc:
+            print(f"browse_for_app: {exc}")
+            return None
+
+
     def save_config(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(cfg, dict):
             raise ValueError("config must be an object")

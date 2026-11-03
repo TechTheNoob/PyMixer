@@ -20,6 +20,7 @@ import win32process
 import config_store
 import tray_popup
 import tray_menu
+import app_launch
 
 # --- GLOBAL VARIABLES ---
 ser = None
@@ -193,6 +194,50 @@ def open_webpage(url):
         print(f"Opening webpage: {url}")
     except Exception as e:
         print(f"Could not open webpage: {e}")
+
+
+
+def dispatch_button_action(app_command):
+    """
+    Run the configured action for a rising-edge board button.
+
+    - Specials: mic/master mute, lock, profile switch
+    - mute:<target> → toggle that app's session mute (legacy explicit)
+    - http(s)/www → browser
+    - Anything else (exe, .lnk, protocol, shell:AppsFolder, bare name) → launch
+    """
+    if not app_command:
+        return
+    cmd = str(app_command).strip()
+    if cmd == 'toggle_mic_mute':
+        toggle_mic_mute()
+        return
+    if cmd == 'toggle_master_mute':
+        toggle_master_mute()
+        return
+    if cmd == 'lock_pc':
+        lock_pc()
+        return
+    if cmd == 'next_profile':
+        apply_profile_switch(cycle=True)
+        return
+    if cmd.startswith('profile:'):
+        apply_profile_switch(name=cmd.split(':', 1)[1])
+        return
+    if cmd.lower().startswith('mute:'):
+        target = cmd.split(':', 1)[1].strip()
+        session = get_audio_session(target)
+        if session:
+            toggle_app_mute(session)
+        else:
+            print(f"mute target not found: {target}")
+        return
+    if cmd.startswith('http://') or cmd.startswith('https://') or cmd.startswith('www.'):
+        url = cmd if cmd.startswith('http') else 'https://' + cmd
+        open_webpage(url)
+        return
+    # General launch — works for .exe, .lnk, protocols, UWP shell: URIs, PATH names
+    app_launch.launch_app(cmd)
 
 
 def save_config_dict(cfg):
@@ -373,25 +418,10 @@ def serial_reader_thread():
                         last_button_state[key] = 0
 
                     if button_value == 1 and last_button_state[key] == 0:
-                        # Check for new button actions
-                        if app_command == 'toggle_mic_mute':
-                            toggle_mic_mute()
-                        elif app_command == 'toggle_master_mute':
-                            toggle_master_mute()
-                        elif app_command == 'lock_pc':
-                            lock_pc()
-                        elif app_command == 'next_profile':
-                            apply_profile_switch(cycle=True)
-                        elif isinstance(app_command, str) and app_command.startswith('profile:'):
-                            apply_profile_switch(name=app_command.split(':', 1)[1])
-                        elif isinstance(app_command, str) and (app_command.startswith('http') or app_command.startswith('www.')):
-                            url = app_command if app_command.startswith('http') else 'https://' + app_command
-                            open_webpage(url)
-                        elif app_command:
-                            # Default action is to toggle mute for an application
-                            session = get_audio_session(app_command)
-                            if session:
-                                toggle_app_mute(session)
+                        try:
+                            dispatch_button_action(app_command)
+                        except Exception as e:
+                            print(f"button {key} action {app_command!r} failed: {e}")
                     
                     last_button_state[key] = button_value
             

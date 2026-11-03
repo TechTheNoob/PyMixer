@@ -29,7 +29,7 @@
     config: null,
     ports: [],
     apps: [],
-    appCatalog: { audio: [], running: [], current: null },
+    appCatalog: { audio: [], running: [], installed: [], current: null },
     connected: false,
     demo: false,
     modalMode: null, // 'add' | 'rename'
@@ -77,6 +77,10 @@
   function looksLikeUrl(v) {
     if (!v) return false;
     if (/^https?:\/\//i.test(v) || /^www\./i.test(v)) return true;
+    // Protocols (steam://, spotify:) and shell: URIs / .lnk / paths are launches, not webpages
+    if (/^(steam|spotify|shell):/i.test(v)) return false;
+    if (/\.lnk$/i.test(v) || /\\/.test(v) || /^[A-Za-z]:[\\\/]/.test(v)) return false;
+    if (v.startsWith("mute:") || v.startsWith("launch:")) return false;
     if (
       v.includes(".") &&
       !/\.exe$/i.test(v) &&
@@ -111,7 +115,7 @@
     state.connected = false;
     state.ports = [];
     state.apps = [];
-    state.appCatalog = { audio: [], running: [], current: null };
+    state.appCatalog = { audio: [], running: [], installed: [], current: null };
     state.config = {
       SERIAL_PORT: "",
       BAUD_RATE: 115200,
@@ -138,7 +142,7 @@
       state.config = data.config;
       state.ports = data.ports || [];
       state.apps = data.apps || [];
-      state.appCatalog = data.app_catalog || { audio: [], running: [], current: null };
+      state.appCatalog = data.app_catalog || { audio: [], running: [], installed: [], current: null };
       state.connected = !!data.connected;
       if (data.live) state.live = data.live;
       state.demo = !!data.demo;

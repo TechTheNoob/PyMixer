@@ -173,8 +173,17 @@ def build_app_catalog(
         if current.lower() not in all_known:
             current_entry = {"value": current, "label": friendly_app_label(current)}
 
+    installed: List[Dict[str, str]] = []
+    try:
+        import app_launch
+
+        installed = list(app_launch.list_installed_apps())
+    except Exception:
+        installed = []
+
     return {
         "audio": catalog_entries(audio_list),
         "running": catalog_entries(running_only),
+        "installed": installed,
         "current": current_entry,
     }

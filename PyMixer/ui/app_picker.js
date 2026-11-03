@@ -19,7 +19,12 @@
     if (value === "next_profile") return "Next Profile";
     if (value === "__url__") return "Open Webpage…";
     if (String(value).startsWith("profile:")) return "Profile: " + value.slice(8);
-    return String(value).replace(/\.exe$/i, "");
+    var s = String(value);
+    if (/\.lnk$/i.test(s)) {
+      var base = s.split(/\\|\//).pop() || s;
+      return base.replace(/\.lnk$/i, "");
+    }
+    return s.replace(/\.exe$/i, "");
   }
 
   function labelForValue(value, special, catalog) {
@@ -27,7 +32,7 @@
     var hit = (special || []).find(function (o) { return o.value === value; });
     if (hit) return hit.label;
     var cat = catalog || {};
-    var groups = [cat.audio || [], cat.running || []];
+    var groups = [cat.audio || [], cat.running || [], cat.installed || []];
     for (var g = 0; g < groups.length; g++) {
       var e = groups[g].find(function (x) { return x.value === value; });
       if (e) return e.label;
@@ -125,6 +130,7 @@
     var compact = !!opts.compact;
     var current = opts.current || "";
     var looksLikeUrl = opts.looksLikeUrl || function () { return false; };
+    var onBrowse = opts.onBrowse || null;
 
     var root = document.createElement("div");
     root.className = "app-picker" + (compact ? " compact" : "");
@@ -161,9 +167,10 @@
         '<div class="ap-search-wrap"><input class="ap-search" type="text" placeholder="Search apps…" spellcheck="false" /></div>' +
         '<div class="ap-list" role="listbox"></div>' +
         '<div class="ap-manual">' +
-        '<button type="button" class="ap-manual-toggle">Type an .exe…</button>' +
+        '<button type="button" class="ap-browse">Browse for app…</button>' +
+        '<button type="button" class="ap-manual-toggle">Type a name or path…</button>' +
         '<div class="ap-manual-row">' +
-        '<input class="ap-manual-input" type="text" placeholder="MyApp.exe" spellcheck="false" />' +
+        '<input class="ap-manual-input" type="text" placeholder="MyApp.exe or path" spellcheck="false" />' +
         '<button type="button" class="ap-manual-ok">Use</button>' +
         "</div></div>";
       return el;
@@ -215,6 +222,21 @@
             );
           });
           if (matched.length) pushGroup("Other running apps (matches)", matched);
+        }
+      }
+
+      var installed = cat.installed || [];
+      if (installed.length) {
+        if (q) {
+          var im = installed.filter(function (e) {
+            return (
+              String(e.label).toLowerCase().indexOf(q) >= 0 ||
+              String(e.value).toLowerCase().indexOf(q) >= 0
+            );
+          });
+          pushGroup("Installed apps (Start Menu)", im.slice(0, 80));
+        } else {
+          pushGroup("Installed apps (Start Menu)", installed.slice(0, 60));
         }
       }
       return groups;
@@ -330,9 +352,38 @@
         e.stopPropagation();
         var v = panel.querySelector(".ap-manual-input").value.trim();
         if (!v) return;
-        if (!/\.exe$/i.test(v)) v += ".exe";
+        // Don't force .exe onto paths, protocols, .lnk, or shell: URIs
+        if (
+          !/\.exe$/i.test(v) &&
+          !/\.lnk$/i.test(v) &&
+          !/^[a-z][a-z0-9+\-.]*:/i.test(v) &&
+          !/^shell:/i.test(v) &&
+          v.indexOf("\\") < 0 &&
+          v.indexOf("/") < 0 &&
+          v.indexOf(" ") < 0
+        ) {
+          v += ".exe";
+        }
         pick(v);
       });
+
+      var browseBtn = panel.querySelector(".ap-browse");
+      if (browseBtn) {
+        browseBtn.addEventListener("click", function (e) {
+          e.stopPropagation();
+          function applyPath(path) {
+            if (path) pick(String(path));
+          }
+          if (typeof onBrowse === "function") {
+            Promise.resolve(onBrowse()).then(applyPath).catch(function () {});
+            return;
+          }
+          var a = window.pywebview && window.pywebview.api;
+          if (a && typeof a.browse_for_app === "function") {
+            Promise.resolve(a.browse_for_app()).then(applyPath).catch(function () {});
+          }
+        });
+      }
 
       // Stop clicks inside panel from counting as outside
       panel.addEventListener("click", function (e) { e.stopPropagation(); });
