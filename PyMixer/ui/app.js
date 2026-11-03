@@ -18,9 +18,9 @@
   ];
 
   const CURVE_OPTIONS = [
-    { value: "linear", label: "Linear" },
-    { value: "gentle", label: "Gentle" },
-    { value: "strong", label: "Strong" },
+    { value: "linear", label: "Linear — even all the way" },
+    { value: "gentle", label: "Gentle — more control at low volume" },
+    { value: "strong", label: "Strong — lots of control at low volume" },
   ];
 
   const LIVE_POLL_MS = 150;
@@ -373,14 +373,34 @@
 
       const curveRow = document.createElement("div");
       curveRow.className = "curve-row";
-      curveRow.innerHTML = `<label for="curve-${key}" title="More travel at the low end">Curve</label>`;
+      curveRow.innerHTML = `<label for="curve-${key}" title="How volume grows as you turn the knob">Curve</label>`;
       const curveSel = document.createElement("select");
       curveSel.className = "curve-select";
       curveSel.id = "curve-" + key;
       curveSel.dataset.curve = key;
-      curveSel.title = "Response curve — gentle/strong give more travel at low volume";
+      curveSel.title = "Gentle/Strong = finer control near silence; change applies on save without moving the knob";
       fillSelect(curveSel, CURVE_OPTIONS, curve);
+      const preview = document.createElement("span");
+      preview.className = "curve-preview";
+      preview.setAttribute("aria-hidden", "true");
+      function paintCurvePreview(name) {
+        const exp = name === "strong" ? 3 : name === "gentle" ? 1.8 : 1;
+        const pts = [];
+        for (let i = 0; i <= 8; i++) {
+          const x = i / 8;
+          const y = Math.pow(x, exp);
+          pts.push((4 + x * 28).toFixed(1) + "," + (20 - y * 16).toFixed(1));
+        }
+        preview.innerHTML =
+          '<svg width="36" height="22" viewBox="0 0 36 22">' +
+          '<polyline fill="none" stroke="currentColor" stroke-width="1.6" points="' +
+          pts.join(" ") +
+          '"/></svg>';
+      }
+      paintCurvePreview(curve);
+      curveSel.addEventListener("change", () => paintCurvePreview(curveSel.value));
       curveRow.appendChild(curveSel);
+      curveRow.appendChild(preview);
 
       optsCol.appendChild(opts);
       optsCol.appendChild(curveRow);

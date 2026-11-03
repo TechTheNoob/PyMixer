@@ -201,5 +201,28 @@ class SettingsPopupApiSmokeTests(unittest.TestCase):
         self.assertIn("connected", st)
 
 
+
+class TestCurveForceReapplySource(unittest.TestCase):
+    """v1.4.0: curve/reverse change must force one ungated volume apply."""
+
+    def test_serial_thread_tracks_curve_and_force_flag(self):
+        with open(os.path.join(ROOT, "PyMixer.pyw"), encoding="utf-8") as f:
+            src = f.read()
+        self.assertIn("force_reapply", src)
+        self.assertIn("prev_curve", src)
+        self.assertIn("prev_reverse", src)
+        self.assertIn("forced = key in force_reapply", src)
+        self.assertIn("force_reapply.discard(key)", src)
+
+    def test_settings_curve_labels_are_plain_english(self):
+        with open(os.path.join(ROOT, "ui", "app.js"), encoding="utf-8") as f:
+            js = f.read()
+        self.assertIn("even all the way", js)
+        self.assertIn("more control at low volume", js)
+        self.assertIn("lots of control at low volume", js)
+        self.assertIn("paintCurvePreview", js)
+        self.assertIn("curve-preview", js)
+
+
 if __name__ == "__main__":
     unittest.main()

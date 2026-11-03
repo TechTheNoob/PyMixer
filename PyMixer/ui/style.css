@@ -367,6 +367,13 @@
     font-family: var(--inter); font-size: 9px; color: var(--muted);
     white-space: nowrap;
   }
+  .curve-preview {
+    display: inline-flex;
+    align-items: center;
+    color: #b5bac1;
+    flex-shrink: 0;
+  }
+  .curve-preview svg { display: block; }
   .curve-row {
     display: flex; align-items: center; justify-content: space-between; gap: 4px;
     font-family: var(--inter); font-size: 10px; color: var(--muted); width: 100%;

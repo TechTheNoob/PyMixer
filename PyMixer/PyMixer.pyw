@@ -317,6 +317,10 @@ def serial_reader_thread():
     last_button_state = {}
     last_knob_value = {}
     last_config_load_time = time.time()
+    # When curve/reverse changes on disk, re-apply current raw once (skip sensitivity).
+    force_reapply = set()
+    prev_curve = {}
+    prev_reverse = {}
 
     pythoncom.CoInitialize()
 
@@ -346,6 +350,35 @@ def serial_reader_thread():
                             pass
                     else:
                         _menu_fingerprint = after
+                    # Curve / reverse change → re-apply current board position immediately
+                    new_curve = dict(config.get('SLIDER_CURVE') or {})
+                    new_reverse = dict(config.get('SLIDER_REVERSE') or {})
+                    if prev_curve or prev_reverse:
+                        num = int(config.get('NUM_KNOBS') or 5)
+                        for i in range(num):
+                            key = f'K{i + 1}'
+                            if (prev_curve.get(key) != new_curve.get(key)
+                                    or bool(prev_reverse.get(key)) != bool(new_reverse.get(key))):
+                                force_reapply.add(key)
+                                # Apply now from last known raw (don't wait for next serial tick)
+                                if key in last_knob_value:
+                                    raw = last_knob_value[key]
+                                    if new_reverse.get(key, False):
+                                        scaled = 1023.0 - float(raw)
+                                    else:
+                                        scaled = float(raw)
+                                    norm = max(0.0, min(1.0, scaled / 1023.0))
+                                    curve_name = new_curve.get(key, 'linear')
+                                    level = config_store.apply_curve(norm, curve_name)
+                                    app_name = (config.get('APP_MAPPINGS') or {}).get(key, '')
+                                    if app_name:
+                                        try:
+                                            apply_knob_volume(app_name, level, key=key)
+                                        except Exception as e:
+                                            print(f"force reapply {key}: {e}")
+                                    force_reapply.discard(key)
+                    prev_curve = new_curve
+                    prev_reverse = new_reverse
 
             if not ser or not ser.is_open:
                 time.sleep(1)
@@ -394,8 +427,11 @@ def serial_reader_thread():
                     sens = float(sensitivity) if float(sensitivity) > 0 else 1.0
                 except (TypeError, ValueError):
                     sens = 1.0
-                if abs(knob_value - last_knob_value[key]) < 10 / sens:
+                forced = key in force_reapply
+                if not forced and abs(knob_value - last_knob_value[key]) < 10 / sens:
                     continue
+                if forced:
+                    force_reapply.discard(key)
 
                 app_name = config.get('APP_MAPPINGS', {}).get(key, '')
                 if app_name:
