@@ -28,16 +28,34 @@ def _ensure_com() -> None:
             pass
 
 
+def _endpoint_volume(device):  # type: ignore[no-untyped-def]
+    """Prefer AudioDevice.EndpointVolume; fall back to IMMDevice.Activate."""
+    from ctypes import POINTER, cast
+
+    from comtypes import CLSCTX_ALL  # type: ignore
+    from pycaw.pycaw import IAudioEndpointVolume  # type: ignore
+
+    if device is None:
+        raise RuntimeError("audio device is None")
+    ep = getattr(device, "EndpointVolume", None)
+    if ep is not None:
+        return ep
+    activate = getattr(device, "Activate", None)
+    if callable(activate):
+        interface = activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        return cast(interface, POINTER(IAudioEndpointVolume))
+    inner = getattr(device, "_dev", None) or getattr(device, "device", None)
+    if inner is not None and callable(getattr(inner, "Activate", None)):
+        interface = inner.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        return cast(interface, POINTER(IAudioEndpointVolume))
+    raise AttributeError(f"{type(device).__name__} has neither EndpointVolume nor Activate")
+
+
 def get_master_volume() -> Optional[float]:
     try:
-        from ctypes import POINTER, cast
+        from pycaw.pycaw import AudioUtilities  # type: ignore
 
-        from comtypes import CLSCTX_ALL  # type: ignore
-        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume  # type: ignore
-
-        devices = AudioUtilities.GetSpeakers()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        vol = cast(interface, POINTER(IAudioEndpointVolume))
+        vol = _endpoint_volume(AudioUtilities.GetSpeakers())
         return float(vol.GetMasterVolumeLevelScalar())
     except Exception:
         return None

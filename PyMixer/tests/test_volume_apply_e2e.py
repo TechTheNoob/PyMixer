@@ -146,17 +146,29 @@ class VolumeApplyE2ETests(unittest.TestCase):
         self.assertTrue(ok)
         self.assertEqual(self.simple.levels, [0.42])
 
-    def test_apply_knob_master_uses_endpoint(self):
-        speakers = mock.MagicMock()
-        speakers.Activate.return_value = self.endpoint
+    def test_apply_knob_master_uses_endpoint_property(self):
+        """Newer pycaw: AudioDevice.EndpointVolume, no Activate()."""
+        speakers = mock.MagicMock(spec=["EndpointVolume", "FriendlyName"])
+        speakers.EndpointVolume = self.endpoint
+        # Ensure Activate is absent so we exercise the property path
         self.app.AudioUtilities.GetSpeakers.return_value = speakers
-        # cast(interface, POINTER(...)) should return the endpoint mock
+        ok = self.app.apply_knob_volume("explorer.exe", 0.77, key="K2")
+        self.assertTrue(ok)
+        self.assertEqual(self.endpoint.levels, [0.77])
+
+    def test_apply_knob_master_activate_fallback(self):
+        """Older pycaw: IMMDevice.Activate(...)."""
+        speakers = mock.MagicMock(spec=["Activate"])
+        speakers.Activate.return_value = self.endpoint
+        # No EndpointVolume attribute
+        self.app.AudioUtilities.GetSpeakers.return_value = speakers
         with mock.patch.object(self.app, "cast", side_effect=lambda iface, _t: iface), mock.patch.object(
             self.app, "POINTER", return_value=object()
         ):
-            ok = self.app.apply_knob_volume("explorer.exe", 0.77, key="K2")
+            ok = self.app.apply_knob_volume("explorer.exe", 0.55, key="K2")
         self.assertTrue(ok)
-        self.assertEqual(self.endpoint.levels, [0.77])
+        self.assertEqual(self.endpoint.levels, [0.55])
+        speakers.Activate.assert_called_once()
 
     def test_apply_knob_no_session_is_false_and_silent(self):
         self.app.AudioUtilities.GetAllSessions.return_value = []

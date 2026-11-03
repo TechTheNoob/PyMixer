@@ -99,22 +99,46 @@ def toggle_app_mute(session):
         volume.SetMute(not current_mute, None)
         print(f"Mute for {session.Process.name()} is now {'ON' if not current_mute else 'OFF'}")
 
+def _endpoint_volume(device):
+    """
+    Resolve IAudioEndpointVolume for a pycaw AudioDevice / IMMDevice.
+
+    Newer pycaw (2024+) wraps devices as AudioDevice with an EndpointVolume
+    property and no Activate(). Older pycaw returned IMMDevice with Activate().
+    Support both so Master Volume / mute keep working across versions.
+    """
+    if device is None:
+        raise RuntimeError("audio device is None")
+    ep = getattr(device, "EndpointVolume", None)
+    if ep is not None:
+        return ep
+    activate = getattr(device, "Activate", None)
+    if callable(activate):
+        interface = activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        return cast(interface, POINTER(IAudioEndpointVolume))
+    # Last resort: underlying IMMDevice on AudioDevice wrappers
+    inner = getattr(device, "_dev", None) or getattr(device, "device", None)
+    if inner is not None and callable(getattr(inner, "Activate", None)):
+        interface = inner.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        return cast(interface, POINTER(IAudioEndpointVolume))
+    raise AttributeError(
+        f"{type(device).__name__} has neither EndpointVolume nor Activate "
+        "(incompatible pycaw / comtypes)"
+    )
+
+
 def set_master_volume(volume_level):
     """
     Sets the master system volume.
     """
-    devices = AudioUtilities.GetSpeakers()
-    interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-    volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
+    volume_interface = _endpoint_volume(AudioUtilities.GetSpeakers())
     volume_interface.SetMasterVolumeLevelScalar(volume_level, None)
 
 def toggle_master_mute():
     """
     Toggles the mute state of the master audio device.
     """
-    devices = AudioUtilities.GetSpeakers()
-    interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-    volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
+    volume_interface = _endpoint_volume(AudioUtilities.GetSpeakers())
     current_mute = volume_interface.GetMute()
     volume_interface.SetMute(not current_mute, None)
     print(f"Master volume mute is now {'ON' if not current_mute else 'OFF'}")
@@ -143,9 +167,7 @@ def toggle_mic_mute():
     Toggles the mute state of the default microphone.
     """
     try:
-        devices = AudioUtilities.GetMicrophone()
-        interface = devices.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
-        volume_interface = cast(interface, POINTER(IAudioEndpointVolume))
+        volume_interface = _endpoint_volume(AudioUtilities.GetMicrophone())
         current_mute = volume_interface.GetMute()
         volume_interface.SetMute(not current_mute, None)
         print(f"Microphone mute is now {'ON' if not current_mute else 'OFF'}")
@@ -332,7 +354,12 @@ def serial_reader_thread():
 
                 app_name = config.get('APP_MAPPINGS', {}).get(key, '')
                 if app_name:
-                    apply_knob_volume(app_name, volume_level, key=key)
+                    try:
+                        apply_knob_volume(app_name, volume_level, key=key)
+                    except Exception as e:
+                        # Never let one bad mapping (e.g. pycaw API drift) kill the
+                        # serial reader — other knobs must keep working.
+                        print(f"apply_knob_volume({app_name!r}, {key}): {e}")
 
                 last_knob_value[key] = knob_value
 
