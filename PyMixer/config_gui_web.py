@@ -250,7 +250,7 @@ def run(config_file: Optional[str] = None) -> None:
         js_api=api,
         width=1100,
         height=700,
-        min_size=(960, 620),
+        min_size=(860, 560),
         background_color="#1E1F22",
     )
     api.bind_window(window)

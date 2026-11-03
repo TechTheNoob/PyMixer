@@ -266,6 +266,28 @@ def safe_dismiss(*, hide_only: bool = True) -> Dict[str, Any]:
     return result
 
 
+def _force_popup_size(window) -> None:
+    """Keep the tray popup at its designed size (never leave an empty oversized frame)."""
+    if window is None:
+        return
+    for meth, args in (
+        ("resize", (POPUP_WIDTH, POPUP_HEIGHT)),
+        ("set_window_size", (POPUP_WIDTH, POPUP_HEIGHT)),
+    ):
+        fn = getattr(window, meth, None)
+        if callable(fn):
+            try:
+                fn(*args)
+                return
+            except Exception:
+                pass
+    try:
+        window.width = POPUP_WIDTH
+        window.height = POPUP_HEIGHT
+    except Exception:
+        pass
+
+
 def safe_show() -> None:
     global _hidden, _shown_at, _window
     if _window is None or _closing:
@@ -276,6 +298,7 @@ def safe_show() -> None:
             _window.move(x, y)
         except Exception:
             pass
+        _force_popup_size(_window)
         _window.show()
         try:
             _window.on_top = True
@@ -395,6 +418,7 @@ def run() -> int:
         frameless=True,
         on_top=True,
         easy_drag=False,
+        resizable=False,
         background_color="#1E1F22",
         shadow=True,
     )

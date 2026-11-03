@@ -8,6 +8,7 @@ Hardware volume mixer for an ESP32-S3 box + a Windows tray app.
 
 ## What's new in this fork
 
+- **v1.4.3** — tray popup stays fixed at its designed size (`resizable=False`, reset on show); Settings `min_size` lowered so 900px-wide layouts work with all 5 knob cards
 - **v1.4.2** — optional **Virtual controller** (Settings toggle, default off): Discord-dark pywebview board with sliders + buttons that drive the same Windows volume / button path as hardware; tray/native menu **Show virtual controller** when enabled; real board pauses virtual (~3s quiet resume); windowless `pythonw` launch
 - **v1.4.1** — settings layout fits all 5 knob cards at narrow window widths (minmax grid, short curve labels + hint/tooltip, removed 960px min-width)
 - **v1.4.0** — changing a knob curve/reverse re-applies the current board position immediately (bypasses sensitivity once); settings curve labels in plain English with a tiny SVG preview
