@@ -18,9 +18,9 @@
   ];
 
   const CURVE_OPTIONS = [
-    { value: "linear", label: "Linear — even all the way" },
-    { value: "gentle", label: "Gentle — more control at low volume" },
-    { value: "strong", label: "Strong — lots of control at low volume" },
+    { value: "linear", label: "Linear", hint: "Even all the way" },
+    { value: "gentle", label: "Gentle", hint: "More control at low volume" },
+    { value: "strong", label: "Strong", hint: "Lots of control at low volume" },
   ];
 
   const LIVE_POLL_MS = 150;
@@ -251,6 +251,7 @@
       const opt = document.createElement("option");
       opt.value = o.value;
       opt.textContent = o.label;
+      if (o.hint) opt.title = o.hint;
       sel.appendChild(opt);
     });
     if (current !== undefined && current !== null) {
@@ -378,24 +379,34 @@
       curveSel.className = "curve-select";
       curveSel.id = "curve-" + key;
       curveSel.dataset.curve = key;
-      curveSel.title = "Gentle/Strong = finer control near silence; change applies on save without moving the knob";
       fillSelect(curveSel, CURVE_OPTIONS, curve);
       const preview = document.createElement("span");
       preview.className = "curve-preview";
       preview.setAttribute("aria-hidden", "true");
+      const hint = document.createElement("div");
+      hint.className = "curve-hint";
+      function curveMeta(name) {
+        return CURVE_OPTIONS.find((o) => o.value === name) || CURVE_OPTIONS[0];
+      }
       function paintCurvePreview(name) {
+        const meta = curveMeta(name);
         const exp = name === "strong" ? 3 : name === "gentle" ? 1.8 : 1;
         const pts = [];
         for (let i = 0; i <= 8; i++) {
           const x = i / 8;
           const y = Math.pow(x, exp);
-          pts.push((4 + x * 28).toFixed(1) + "," + (20 - y * 16).toFixed(1));
+          pts.push((3 + x * 18).toFixed(1) + "," + (14 - y * 10).toFixed(1));
         }
         preview.innerHTML =
-          '<svg width="36" height="22" viewBox="0 0 36 22">' +
-          '<polyline fill="none" stroke="currentColor" stroke-width="1.6" points="' +
+          '<svg width="24" height="16" viewBox="0 0 24 16" preserveAspectRatio="none">' +
+          '<polyline fill="none" stroke="currentColor" stroke-width="1.5" points="' +
           pts.join(" ") +
           '"/></svg>';
+        preview.title = meta.hint || "";
+        curveSel.title = meta.hint
+          ? meta.label + " — " + meta.hint + ". Change applies on save without moving the knob."
+          : "Response curve";
+        hint.textContent = meta.hint || "";
       }
       paintCurvePreview(curve);
       curveSel.addEventListener("change", () => paintCurvePreview(curveSel.value));
@@ -404,6 +415,7 @@
 
       optsCol.appendChild(opts);
       optsCol.appendChild(curveRow);
+      optsCol.appendChild(hint);
       controls.appendChild(sel);
       controls.appendChild(optsCol);
       root.appendChild(card);

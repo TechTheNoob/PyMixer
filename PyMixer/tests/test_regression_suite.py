@@ -217,11 +217,18 @@ class TestCurveForceReapplySource(unittest.TestCase):
     def test_settings_curve_labels_are_plain_english(self):
         with open(os.path.join(ROOT, "ui", "app.js"), encoding="utf-8") as f:
             js = f.read()
-        self.assertIn("even all the way", js)
-        self.assertIn("more control at low volume", js)
-        self.assertIn("lots of control at low volume", js)
+        self.assertIn('label: "Linear"', js)
+        self.assertIn('label: "Gentle"', js)
+        self.assertIn('label: "Strong"', js)
+        self.assertIn("Even all the way", js)
+        self.assertIn("More control at low volume", js)
+        self.assertIn("Lots of control at low volume", js)
         self.assertIn("paintCurvePreview", js)
         self.assertIn("curve-preview", js)
+        with open(os.path.join(ROOT, "ui", "style.css"), encoding="utf-8") as f:
+            css = f.read()
+        self.assertIn("minmax(0, 1fr)", css)
+        self.assertIn("curve-hint", css)
 
 
 if __name__ == "__main__":

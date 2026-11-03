@@ -8,6 +8,7 @@ Hardware volume mixer for an ESP32-S3 box + a Windows tray app.
 
 ## What's new in this fork
 
+- **v1.4.1** — settings layout fits all 5 knob cards at narrow window widths (minmax grid, short curve labels + hint/tooltip, removed 960px min-width)
 - **v1.4.0** — changing a knob curve/reverse re-applies the current board position immediately (bypasses sensitivity once); settings curve labels in plain English with a tiny SVG preview
 - **v1.3.9** — durable demo button events (no PermissionError on .tmp); buttons launch any Windows app (.exe/.lnk/protocol/UWP/Start Menu); Start Menu picker + Browse
 - **v1.3.8** — pycaw AudioDevice.EndpointVolume compat (Master Volume / mute no longer crash serial thread on Python 3.15 + pycaw 2026); per-knob apply errors isolated
