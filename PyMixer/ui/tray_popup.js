@@ -1,6 +1,6 @@
 (function () {
   "use strict";
-  const state = { data: null, demo: false, timer: null, waiting: false };
+  const state = { data: null, waiting: false, timer: null };
 
   const $ = (id) => document.getElementById(id);
 
@@ -18,36 +18,28 @@
     return { stale: true, connected: false, knobs: {} };
   }
 
+  function emptyState() {
+    return {
+      active: "—",
+      profiles: [],
+      icons: {},
+      connected: false,
+      live: emptyLive(),
+    };
+  }
+
   async function refresh() {
     if (!api()) {
-      state.data = {
-        active: "—",
-        profiles: [],
-        icons: {},
-        connected: false,
-        demo: false,
-        live: emptyLive(),
-      };
-      state.demo = false;
+      state.data = emptyState();
       state.waiting = true;
       render();
       return;
     }
     try {
       state.data = await call("get_popup_state");
-      // Hardware demo flag is for status only — never invent live numbers
-      state.demo = !!(state.data && state.data.demo);
       state.waiting = false;
     } catch (e) {
-      state.data = {
-        active: "—",
-        profiles: [],
-        icons: {},
-        connected: false,
-        demo: false,
-        live: emptyLive(),
-      };
-      state.demo = false;
+      state.data = emptyState();
       state.waiting = true;
     }
     render();
@@ -55,70 +47,107 @@
 
   function renderLevels() {
     const root = $("levels");
+    if (!root) return;
     root.innerHTML = "";
     const live = (state.data && state.data.live) || emptyLive();
     for (let i = 1; i <= 5; i++) {
       const key = "K" + i;
       const entry = (live.knobs || {})[key] || {};
       const stale = !!live.stale || entry.pct == null;
-      const pct = stale ? null : Math.max(0, Math.min(100, Math.round(Number(entry.pct) || 0)));
-      const row = document.createElement("div");
-      row.className = "level" + (stale ? " stale" : "");
-      row.dataset.knob = key;
-      row.innerHTML =
-        '<span class="k">' +
+      const pct = stale ? null : Math.max(0, Math.min(100, Math.round(Number(entry.pct))));
+      const show = pct == null ? 0 : pct;
+      const el = document.createElement("div");
+      el.className = "lvl" + (stale ? " stale" : "");
+      el.dataset.knob = key;
+      el.innerHTML =
+        '<div class="t">' +
         key +
-        '</span><div class="bar"><i style="width:' +
-        (pct == null ? 0 : pct) +
-        '%"></i></div><span class="pct">' +
+        "</div>" +
+        '<div class="bar' +
+        (stale ? " stale" : "") +
+        '">' +
+        '<div class="fill" style="height:' +
+        show +
+        "%;opacity:" +
+        (stale ? "0.35" : "1") +
+        '"></div>' +
+        '<div class="knob" style="bottom:calc(' +
+        show +
+        "% - 5px);opacity:" +
+        (stale ? "0.35" : "1") +
+        '"></div>' +
+        "</div>" +
+        '<div class="p' +
+        (stale ? " dim" : "") +
+        '">' +
         (pct == null ? "—" : pct + "%") +
-        "</span>";
-      root.appendChild(row);
+        "</div>";
+      root.appendChild(el);
     }
   }
 
-  function render() {
-    const d = state.data || {};
-    $("active-profile").textContent = d.active || "—";
-    const pill = $("status-pill");
-    const text = $("status-text");
-    if (state.demo || d.demo) {
-      pill.classList.remove("off");
-      text.textContent = "Demo";
-    } else if (d.connected) {
-      pill.classList.remove("off");
-      text.textContent = "Online";
-    } else {
-      pill.classList.add("off");
-      text.textContent = state.waiting ? "Waiting…" : "Offline";
-    }
-    const list = $("profiles");
-    list.innerHTML = "";
-    (d.profiles || []).forEach((name) => {
+  function renderProfiles() {
+    const root = $("profiles");
+    if (!root) return;
+    root.innerHTML = "";
+    const data = state.data || emptyState();
+    const active = data.active || "";
+    const icons = data.icons || {};
+    (data.profiles || []).forEach((name) => {
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = "prof" + (name === d.active ? " active" : "");
-      const icon = (d.icons && d.icons[name]) || (name[0] || "?").toUpperCase();
-      btn.innerHTML = '<span class="ic">' + icon + "</span><span>" + name + "</span>";
+      btn.className = "pitem" + (name === active ? " active" : "");
+      btn.setAttribute("data-profile", name);
+      const icon = icons[name] || (name.slice(0, 1) || "?").toUpperCase();
+      btn.innerHTML =
+        '<span class="ico" aria-hidden="true"></span> ' +
+        '<span class="lab"></span>' +
+        '<span class="check" aria-hidden="true">✓</span>';
+      btn.querySelector(".ico").textContent = icon;
+      btn.querySelector(".lab").textContent = name;
       btn.addEventListener("click", () => onSwitch(name));
-      list.appendChild(btn);
+      root.appendChild(btn);
     });
+  }
+
+  function render() {
+    const data = state.data || emptyState();
+    const activeEl = $("active-profile");
+    if (activeEl) activeEl.textContent = data.active || "—";
+    const pill = $("status-pill");
+    const text = $("status-text");
+    if (pill && text) {
+      if (data.connected) {
+        pill.classList.remove("off");
+        text.textContent = "Live";
+      } else {
+        pill.classList.add("off");
+        text.textContent = state.waiting ? "Waiting…" : "Offline";
+      }
+    }
     renderLevels();
+    renderProfiles();
+    stamp();
   }
 
   async function onSwitch(name) {
     if (!api()) return;
     try {
       await call("switch_profile", name);
-      await refresh();
-    } catch (_) {}
+      await call("dismiss");
+    } catch (e) {
+      console.warn(e);
+    }
   }
 
   async function onSettings() {
     if (!api()) return;
     try {
       await call("open_settings");
-    } catch (_) {}
+      await call("dismiss");
+    } catch (e) {
+      console.warn(e);
+    }
   }
 
   async function onReconnect() {
@@ -126,20 +155,46 @@
     try {
       await call("reconnect");
       await refresh();
-    } catch (_) {}
+    } catch (e) {
+      console.warn(e);
+    }
   }
 
   async function onQuit() {
     if (!api()) return;
     try {
       await call("quit_app");
+    } catch (e) {
+      console.warn(e);
+    }
+  }
+
+  function stamp() {
+    try {
+      const d = state.data || {};
+      document.documentElement.setAttribute(
+        "data-tray-popup",
+        JSON.stringify({
+          active: d.active || null,
+          profiles: d.profiles || [],
+          connected: !!d.connected,
+          profileButtons: Array.from(document.querySelectorAll("#profiles .pitem")).map((b) => ({
+            className: b.className,
+            lab: ((b.querySelector(".lab") || {}).textContent || ""),
+            text: (b.textContent || "").replace(/\s+/g, " ").trim(),
+          })),
+        })
+      );
     } catch (_) {}
   }
 
   function wire() {
-    $("btn-settings").addEventListener("click", onSettings);
-    $("btn-reconnect").addEventListener("click", onReconnect);
-    $("btn-quit").addEventListener("click", onQuit);
+    const s = $("btn-settings");
+    const r = $("btn-reconnect");
+    const q = $("btn-quit");
+    if (s) s.addEventListener("click", onSettings);
+    if (r) r.addEventListener("click", onReconnect);
+    if (q) q.addEventListener("click", onQuit);
     let blurTimer = null;
     const dismiss = () => call("dismiss").catch(() => {});
     window.addEventListener("keydown", (e) => {
@@ -177,7 +232,6 @@
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", () => {
       if (!api()) {
-        // Empty shell — show "—", then boot when bridge appears
         wire();
         refresh();
         let tries = 0;
@@ -195,5 +249,5 @@
     refresh();
   }
 
-  window.__tray_popup = { refresh, render, renderLevels, state };
+  window.__tray_popup = { refresh, render, renderLevels, renderProfiles, state };
 })();

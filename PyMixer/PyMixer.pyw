@@ -44,14 +44,41 @@ def load_config():
 
 # --- AUDIO CONTROL FUNCTIONS ---
 
+def _normalize_process_name(name):
+    """Case-fold and ensure a trailing .exe so config / pycaw names match."""
+    if not name:
+        return ""
+    n = str(name).strip().lower()
+    if n in ("explorer.exe", "master", "system", "master volume"):
+        return "explorer.exe"
+    if n in ("focused_app", "focused", "current"):
+        return "focused_app"
+    if not n.endswith(".exe") and "." not in n and n not in ("focused_app",):
+        n = n + ".exe"
+    return n
+
+
 def get_audio_session(process_name):
     """
     Finds the audio session for a given process name.
+
+    Matching is case-insensitive and tolerates a missing/extra .exe suffix so
+    config values like Discord.exe still hit a session reported as discord.exe.
     """
+    want = _normalize_process_name(process_name)
+    if not want or want in ("focused_app", "explorer.exe"):
+        return None
     sessions = AudioUtilities.GetAllSessions()
     for session in sessions:
-        if session.Process and session.Process.name() == process_name:
-            return session
+        try:
+            proc = session.Process
+            if not proc:
+                continue
+            have = _normalize_process_name(proc.name())
+            if have == want:
+                return session
+        except Exception:
+            continue
     return None
 
 def set_app_volume(session, volume_level):
@@ -176,6 +203,45 @@ def apply_profile_switch(name=None, cycle=False):
 
 # --- SERIAL COMMUNICATION THREAD ---
 
+def apply_knob_volume(app_name, volume_level, key=None):
+    """
+    Route one knob's curved volume to the mapped target.
+
+    Targets:
+      - focused_app → foreground process session (unless another knob owns it)
+      - explorer.exe / master / system → endpoint master volume
+      - <process>.exe → matching pycaw session (case-insensitive)
+    """
+    target = _normalize_process_name(app_name)
+    if not target:
+        return False
+    if target == "focused_app":
+        focused_app_name = get_focused_app_process_name()
+        if not focused_app_name:
+            return False
+        all_mappings = config.get('APP_MAPPINGS', {}) if config else {}
+        other = [
+            _normalize_process_name(mapped)
+            for k, mapped in all_mappings.items()
+            if k.startswith('K') and k != key
+        ]
+        if _normalize_process_name(focused_app_name) in other:
+            return False
+        session = get_audio_session(focused_app_name)
+        if session:
+            set_app_volume(session, volume_level)
+            return True
+        return False
+    if target == "explorer.exe":
+        set_master_volume(volume_level)
+        return True
+    session = get_audio_session(target)
+    if session:
+        set_app_volume(session, volume_level)
+        return True
+    return False
+
+
 def serial_reader_thread():
     """
     Function to run in a separate thread, continuously reading serial data.
@@ -266,30 +332,7 @@ def serial_reader_thread():
 
                 app_name = config.get('APP_MAPPINGS', {}).get(key, '')
                 if app_name:
-                    if app_name == "focused_app":
-                        focused_app_name = get_focused_app_process_name()
-                        if focused_app_name:
-                            # Check if the focused app already has a dedicated knob
-                            all_mappings = config.get('APP_MAPPINGS', {})
-                            other_knob_mappings = [
-                                mapped_app for k, mapped_app in all_mappings.items()
-                                if k.startswith('K') and k != key
-                            ]
-
-                            if focused_app_name in other_knob_mappings:
-                                # This app has its own knob, so the 'focused_app' knob should ignore it.
-                                pass
-                            else:
-                                session = get_audio_session(focused_app_name)
-                                if session:
-                                    set_app_volume(session, volume_level)
-
-                    elif app_name == 'explorer.exe':
-                        set_master_volume(volume_level)
-                    else:
-                        session = get_audio_session(app_name)
-                        if session:
-                            set_app_volume(session, volume_level)
+                    apply_knob_volume(app_name, volume_level, key=key)
 
                 last_knob_value[key] = knob_value
 

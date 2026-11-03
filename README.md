@@ -8,6 +8,7 @@ Hardware volume mixer for an ESP32-S3 box + a Windows tray app.
 
 ## What's new in this fork
 
+- **v1.3.7** — tray popup profile pills use styled `.pitem` (no white native "DDefault"); case-insensitive pycaw session match; demo is public app + FakeSerial shim only
 - **v1.3.6** — settings/tray never invent placeholder live percentages; when the pywebview bridge is missing faders show "—" and retry after `pywebviewready`; live poll always reads the Python API (demo board or pycaw)
 - **v1.3.5** — regression suite (board→volume math, status, profiles, save-under-lock, picker contracts, no idle live writes); settings/popup honor an API `demo` flag for status display
 

@@ -1,7 +1,6 @@
-"""Shipped UI must never invent placeholder live percentages."""
+"""Shipped UI must never invent placeholder live percentages; popup uses styled pills."""
 from __future__ import annotations
 
-import os
 import unittest
 from pathlib import Path
 
@@ -16,13 +15,19 @@ class NoFakeLiveFallbackTests(unittest.TestCase):
         self.assertNotIn("raw: 700, volume: 0.55", app)
         self.assertIn("get_live_levels", app)
         self.assertIn("offlineShell", app)
-        # Stale path shows em dash
         self.assertIn('vol.textContent = "—"', app)
 
-    def test_tray_popup_has_no_demoData(self):
+    def test_tray_popup_has_no_demoData_and_uses_pitem(self):
         tray = (ROOT / "ui" / "tray_popup.js").read_text(encoding="utf-8")
+        css = (ROOT / "ui" / "tray_popup.css").read_text(encoding="utf-8")
         self.assertNotIn("function demoData", tray)
         self.assertNotIn("pct: 55", tray)
+        self.assertIn('className = "pitem"', tray)
+        self.assertNotIn('className = "prof"', tray)
+        self.assertIn(".lab", tray)
+        self.assertIn(".ico", tray)
+        self.assertIn(".pitem", css)
+        self.assertIn(".ico", css)
         self.assertIn("get_live", tray)
         self.assertIn('"—"', tray)
 
